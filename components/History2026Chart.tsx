@@ -29,6 +29,7 @@ export default function History2026Chart({ initialData, city }: History2026Chart
   const router = useRouter();
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
     setData(initialData);
   }, [initialData]);
@@ -49,7 +50,8 @@ export default function History2026Chart({ initialData, city }: History2026Chart
       } else {
         setStatus({ type: "error", message: result.error || "Gagal mengunggah data." });
       }
-    } catch (e) {
+    } catch (err) {
+      console.error("Error seeding data:", err);
       setStatus({ type: "error", message: "Gagal menghubungkan ke server." });
     } finally {
       setLoading(false);
@@ -77,7 +79,7 @@ export default function History2026Chart({ initialData, city }: History2026Chart
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">
-            Analisis Komparatif Historis 2026
+            Analisis Komparatif Historis 2026 - {city}
           </h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             Data aktual bandara vs prakiraan Open-Meteo sepanjang tahun 2026

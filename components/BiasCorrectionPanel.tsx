@@ -544,7 +544,8 @@ export default function BiasCorrectionPanel({
                   fontSize: 11,
                   color: "#e2e8f0",
                 }}
-                formatter={(val: number) => [
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                formatter={(val: any) => [
                   `${val > 0 ? "+" : ""}${val}${unit}`,
                 ]}
               />

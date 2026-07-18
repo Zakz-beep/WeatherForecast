@@ -56,7 +56,7 @@ export async function POST() {
     }).filter(Boolean);
 
     // 3. Upsert data to Supabase (so running it multiple times is safe)
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("weather_comparison_2026")
       .upsert(rows, { onConflict: "date" });
 
@@ -65,8 +65,9 @@ export async function POST() {
     }
 
     return NextResponse.json({ success: true, count: rows.length });
-  } catch (err: any) {
+  } catch (err) {
     console.error("Seeding error:", err);
-    return NextResponse.json({ error: err.message || "Failed to seed data." }, { status: 500 });
+    const message = err instanceof Error ? err.message : "Failed to seed data.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

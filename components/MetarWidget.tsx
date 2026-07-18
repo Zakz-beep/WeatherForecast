@@ -1,5 +1,5 @@
 import { MetarData } from "@/services/metarService";
-import { Plane, Compass, Eye, Gauge, Thermometer, Wind, Cloud, ShieldAlert, CheckCircle2 } from "lucide-react";
+import { Plane, Eye, Gauge, Thermometer, Wind, Cloud, ShieldAlert } from "lucide-react";
 
 // Translate flight categories
 function getFlightCategoryInfo(fltCat: string) {
