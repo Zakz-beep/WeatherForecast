@@ -21,10 +21,10 @@ export default function WeatherCard({ data, cityName }: { data: WeatherData; cit
           <p className="text-xs sm:text-sm text-blue-100 mb-4 sm:mb-8">{format(parseISO(current.time), "EEEE, d MMMM yyyy | HH:mm", { locale: id })}</p>
           
           <div className="flex items-end gap-4 sm:gap-6 mb-4 sm:mb-8">
-            <span className="text-5xl sm:text-7xl font-bold leading-none">{Math.round(current.temperature_2m)}°</span>
+            <span className="text-5xl sm:text-7xl font-bold leading-none">{current.temperature_2m.toFixed(1)}°</span>
             <div className="flex flex-col pb-0.5">
               <span className="text-xl sm:text-2xl font-medium leading-tight">{label}</span>
-              <span className="text-blue-100 text-xs sm:text-sm mt-0.5">Terasa seperti {Math.round(current.apparent_temperature)}°</span>
+              <span className="text-blue-100 text-xs sm:text-sm mt-0.5">Terasa seperti {current.apparent_temperature.toFixed(1)}°</span>
             </div>
           </div>
           
@@ -33,7 +33,7 @@ export default function WeatherCard({ data, cityName }: { data: WeatherData; cit
               <Wind size={18} className="text-blue-200 flex-shrink-0" />
               <div>
                 <p className="text-[10px] sm:text-xs text-blue-200">Angin</p>
-                <p className="text-xs sm:text-sm font-semibold">{current.wind_speed_10m} km/j</p>
+                <p className="text-xs sm:text-sm font-semibold">{current.wind_speed_10m.toFixed(1)} km/j</p>
               </div>
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2">
@@ -47,7 +47,7 @@ export default function WeatherCard({ data, cityName }: { data: WeatherData; cit
               <Thermometer size={18} className="text-blue-200 flex-shrink-0" />
               <div>
                 <p className="text-[10px] sm:text-xs text-blue-200">Presipitasi</p>
-                <p className="text-xs sm:text-sm font-semibold">{current.precipitation} mm</p>
+                <p className="text-xs sm:text-sm font-semibold">{current.precipitation.toFixed(1)} mm</p>
               </div>
             </div>
           </div>

@@ -40,8 +40,8 @@ export default function ForecastCards({ daily }: ForecastCardsProps) {
         {daily.time.map((time, index) => {
           const { badge, label } = getHLabel(index);
           const { icon: WeatherIcon, label: weatherDesc } = getWeatherInfo(daily.weather_code[index]);
-          const maxTemp = Math.round(daily.temperature_2m_max[index]);
-          const minTemp = Math.round(daily.temperature_2m_min[index]);
+          const maxTemp = daily.temperature_2m_max[index].toFixed(1);
+          const minTemp = daily.temperature_2m_min[index].toFixed(1);
           const rain = daily.precipitation_sum ? daily.precipitation_sum[index] : 0;
           const wind = daily.wind_speed_10m_max ? daily.wind_speed_10m_max[index] : 0;
 
@@ -86,11 +86,11 @@ export default function ForecastCards({ daily }: ForecastCardsProps) {
               <div className="grid grid-cols-2 gap-1 border-t border-slate-100 dark:border-slate-800/60 pt-3 text-[10px] text-slate-500 dark:text-slate-400">
                 <div className="flex items-center gap-1 justify-center" title="Kecepatan Angin Maksimum">
                   <Wind size={12} className="text-slate-400" />
-                  <span>{Math.round(wind)} km/j</span>
+                  <span>{wind.toFixed(1)} km/j</span>
                 </div>
                 <div className="flex items-center gap-1 justify-center" title="Presipitasi Harian">
                   <Droplets size={12} className="text-slate-400" />
-                  <span>{rain} mm</span>
+                  <span>{rain.toFixed(1)} mm</span>
                 </div>
               </div>
             </div>
