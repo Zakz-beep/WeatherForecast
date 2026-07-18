@@ -12,17 +12,20 @@ export async function POST() {
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
   try {
-    // 1. Fetch Singapore Changi 2026 history from Open-Meteo Archive API
-    // Let's get data from Jan 1, 2026 to July 15, 2026
+    // 1. Fetch Singapore Changi 2026 history from Open-Meteo Archive API dynamically up to 2 days ago
     const lat = 1.3644;
     const lon = 103.9915;
-    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=2026-01-01&end_date=2026-07-15&daily=temperature_2m_max,wind_speed_10m_max&timezone=auto`;
+    const endDateObj = new Date();
+    endDateObj.setDate(endDateObj.getDate() - 2); // 2 days ago to account for Open-Meteo archive delay
+    const endDateStr = endDateObj.toISOString().split("T")[0];
+    
+    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=2026-01-01&end_date=${endDateStr}&daily=temperature_2m_max,wind_speed_10m_max&timezone=auto`;
     
     const res = await fetch(url);
     const apiData = await res.json();
 
     if (!apiData.daily) {
-      return NextResponse.json({ error: "Failed to fetch historical data from Open-Meteo." }, { status: 500 });
+      return NextResponse.json({ error: `Failed to fetch historical data up to ${endDateStr} from Open-Meteo.` }, { status: 500 });
     }
 
     const { time, temperature_2m_max, wind_speed_10m_max } = apiData.daily;
