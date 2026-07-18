@@ -116,13 +116,19 @@ export default function MetarWidget({ data }: ExtendedMetarWidgetProps) {
         <div className="sm:text-right">
           <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Terakhir Diperbarui</p>
           <p className="text-xs sm:text-sm font-semibold text-slate-300">
-            {new Date(data.receiptTime).toLocaleString("id-ID", {
-              day: "numeric",
-              month: "short",
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit"
-            })}
+            {(() => {
+              // Ensure the browser parses receiptTime (which is in UTC) correctly
+              const utcString = data.receiptTime.includes("Z") 
+                ? data.receiptTime 
+                : data.receiptTime.replace(" ", "T") + "Z";
+              return new Date(utcString).toLocaleString("id-ID", {
+                day: "numeric",
+                month: "short",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit"
+              });
+            })()}
           </p>
         </div>
       </div>
