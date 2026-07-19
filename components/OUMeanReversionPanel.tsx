@@ -22,7 +22,51 @@ import {
   Calendar,
   Layers,
   ChevronRight,
+  BarChart2,
+  Zap,
 } from "lucide-react";
+
+// ── Pure Math Helpers ──────────────────────────────────────────────────────────
+
+/** Abramowitz & Stegun approximation for the Normal CDF, error < 7.5e-8 */
+function normalCDF(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422820 * Math.exp(-0.5 * x * x);
+  const poly =
+    t * (0.3193815302 +
+      t * (-0.3565637813 +
+        t * (1.7814779372 +
+          t * (-1.8212559978 + t * 1.3302744929))));
+  const cdf = 1 - d * poly;
+  return x >= 0 ? cdf : 1 - cdf;
+}
+
+/** Compute OU conditional mean & std for H+1 given current temp */
+function ouForecast(
+  current: number,
+  mu: number,
+  sigma: number,
+  theta: number
+) {
+  const dt = 1; // 1 day
+  const expNeg  = Math.exp(-theta * dt);
+  const exp2Neg = Math.exp(-2 * theta * dt);
+  const mean = mu + (current - mu) * expNeg;
+  const variance = (sigma * sigma * (1 - exp2Neg)) / (2 * theta);
+  const std = Math.sqrt(variance);
+  return { mean, std };
+}
+
+/** Normal quantile z for common percentiles */
+const Z_SCORES: Record<string, number> = {
+  p5:  -1.6449,
+  p10: -1.2816,
+  p25: -0.6745,
+  p50:  0,
+  p75:  0.6745,
+  p90:  1.2816,
+  p95:  1.6449,
+};
 
 interface OUMeanReversionPanelProps {
   highestRealTemp: number | null;
@@ -87,6 +131,32 @@ export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTem
       isAbove: deviation > 0,
       isWithinVol: absDev <= activeMonthData.sigma,
     };
+  }, [referenceTemp, activeMonthData]);
+
+  // ── Probabilistic Forecast for Tomorrow (H+1) ─────────────────────────────
+  const theta = 0.25;
+  const probabilisticForecast = useMemo(() => {
+    if (referenceTemp == null) return null;
+    const { mean, std } = ouForecast(
+      referenceTemp,
+      activeMonthData.mean,
+      activeMonthData.sigma,
+      theta
+    );
+
+    // Percentile temperatures
+    const percentiles = Object.fromEntries(
+      Object.entries(Z_SCORES).map(([key, z]) => [key, mean + z * std])
+    );
+
+    // Probability of exceeding key thresholds
+    const thresholds = [30, 31, 32, 33, 34].map((t) => ({
+      temp: t,
+      probAbove: (1 - normalCDF((t - mean) / std)) * 100,
+      probBelow: normalCDF((t - mean) / std) * 100,
+    }));
+
+    return { mean, std, percentiles, thresholds };
   }, [referenceTemp, activeMonthData]);
 
   // Persiapkan data untuk chart Recharts
@@ -418,6 +488,117 @@ export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTem
             </strong>{" "}
             ke arah kesetimbangannya, menyeimbangkan anomali cuaca lokal jangka pendek.
           </div>
+        </div>
+      )}
+
+      {/* ── SECTION: Probabilistic Forecast Tomorrow ── */}
+      {probabilisticForecast && referenceTemp != null && (
+        <div className="border border-indigo-100/60 dark:border-indigo-900/30 bg-indigo-50/20 dark:bg-indigo-950/10 rounded-2xl p-4 sm:p-5 space-y-4">
+          {/* Section Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-indigo-500/10 rounded-xl">
+                <BarChart2 size={15} className="text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-300 uppercase tracking-wider">
+                Prediksi Probabilistik Suhu Besok (H+1)
+              </span>
+            </div>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold">
+              &theta; = {theta} · Model OU Analitik
+            </span>
+          </div>
+
+          {/* Expected Temp + Std */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {([
+              { label: "P10 (Dingin)",  val: probabilisticForecast.percentiles.p10,  cls: "text-blue-600 dark:text-blue-400" },
+              { label: "P25",           val: probabilisticForecast.percentiles.p25,  cls: "text-sky-600 dark:text-sky-400" },
+              { label: "P50 (Median)",  val: probabilisticForecast.percentiles.p50,  cls: "text-indigo-600 dark:text-indigo-400 font-extrabold" },
+              { label: "P75",           val: probabilisticForecast.percentiles.p75,  cls: "text-amber-500" },
+              { label: "P90 (Panas)",   val: probabilisticForecast.percentiles.p90,  cls: "text-rose-500" },
+              { label: "E[T] OU Mean",  val: probabilisticForecast.mean,             cls: "text-violet-600 dark:text-violet-400" },
+              { label: "±σ Pred",        val: probabilisticForecast.std,              cls: "text-slate-500" },
+              { label: "Sumber Sekarang", val: referenceTemp,                         cls: "text-slate-600 dark:text-slate-300" },
+            ] as const).map(({ label, val, cls }) => (
+              <div key={label} className="bg-white/60 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 rounded-xl p-2.5 flex flex-col">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{label}</span>
+                <span className={`text-sm font-bold mt-0.5 ${cls}`}>{val.toFixed(1)} °C</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Gradient Temperature Bar */}
+          <div className="space-y-1.5">
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Rentang Distribusi Probabilitas Besok</span>
+            <div className="relative h-8 rounded-full overflow-hidden shadow-inner bg-gradient-to-r from-blue-400 via-indigo-400 via-violet-400 to-rose-400">
+              {/* Median marker */}
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-white shadow-md"
+                style={{
+                  left: `${
+                    ((probabilisticForecast.mean - probabilisticForecast.percentiles.p5) /
+                      (probabilisticForecast.percentiles.p95 - probabilisticForecast.percentiles.p5)) *
+                    100
+                  }%`,
+                }}
+              />
+            </div>
+            <div className="flex justify-between text-[9px] text-slate-400 font-mono px-1">
+              <span>P5 {probabilisticForecast.percentiles.p5.toFixed(1)}°C</span>
+              <span className="font-bold text-indigo-500">P50 {probabilisticForecast.percentiles.p50.toFixed(1)}°C</span>
+              <span>P95 {probabilisticForecast.percentiles.p95.toFixed(1)}°C</span>
+            </div>
+          </div>
+
+          {/* Threshold Probability Table */}
+          <div className="space-y-1.5">
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold flex items-center gap-1">
+              <Zap size={11} className="text-amber-500" />
+              Peluang Melewati Ambang Batas Suhu
+            </span>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-800">
+                    <th className="text-left py-1.5 px-2 text-slate-400 font-semibold text-[10px] uppercase">Ambang</th>
+                    <th className="text-right py-1.5 px-2 text-slate-400 font-semibold text-[10px] uppercase">P(T &gt; X)</th>
+                    <th className="text-right py-1.5 px-2 text-slate-400 font-semibold text-[10px] uppercase">P(T &le; X)</th>
+                    <th className="py-1.5 px-2 w-28"><span className="sr-only">Bar</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                  {probabilisticForecast.thresholds.map(({ temp, probAbove, probBelow }) => (
+                    <tr key={temp} className="hover:bg-indigo-50/30 dark:hover:bg-indigo-950/15 transition-colors">
+                      <td className="py-1.5 px-2 font-mono font-bold text-slate-700 dark:text-slate-200">{temp}°C</td>
+                      <td className={`py-1.5 px-2 text-right font-mono font-semibold ${
+                        probAbove > 60 ? "text-rose-500" : probAbove > 30 ? "text-amber-500" : "text-slate-400"
+                      }`}>{probAbove.toFixed(1)}%</td>
+                      <td className={`py-1.5 px-2 text-right font-mono font-semibold ${
+                        probBelow > 60 ? "text-blue-500" : probBelow > 30 ? "text-sky-500" : "text-slate-400"
+                      }`}>{probBelow.toFixed(1)}%</td>
+                      <td className="py-1.5 px-2">
+                        <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-rose-400 to-rose-500 transition-all duration-500"
+                            style={{ width: `${probAbove.toFixed(0)}%` }}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-slate-400 leading-relaxed">
+            <span className="font-bold text-indigo-500">Catatan metodologi:</span>{" "}
+            Prediksi probabilistik dihitung menggunakan distribusi Normal kondisional dari proses Ornstein-Uhlenbeck (OU).
+            E[T<sub>t+1</sub>] = &mu; + (T<sub>t</sub> - &mu;)·e<sup>-&theta;</sup> ;&nbsp;
+            &sigma;<sub>pred</sub> = &sigma;·&radic;((1 - e<sup>-2&theta;</sup>) / 2&theta;).
+            Asumsi: &theta; = {theta}, sumber T<sub>t</sub> = {isRealObs ? "suhu maks riil METAR" : "prakiraan ECMWF"}.
+          </p>
         </div>
       )}
 
