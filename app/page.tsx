@@ -4,7 +4,8 @@ import WeatherCard from "@/components/WeatherCard";
 import MetarWidget from "@/components/MetarWidget";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { getWeather, getHourlyHistory, getWeatherHistory2026 } from "@/services/weatherService";
-import { getNearbyMetar, getHistoricalMetar } from "@/services/metarService";
+import { getNearbyMetar, getHistoricalMetar, computeTempEstimate } from "@/services/metarService";
+
 import HistoryChart from "@/components/HistoryChart";
 import History2026Chart from "@/components/History2026Chart";
 import BiasCorrectionPanel from "@/components/BiasCorrectionPanel";
@@ -180,12 +181,9 @@ export default async function Home(props: { searchParams: SearchParams }) {
   const ecmwfHistory = await getHourlyHistory(lat, lon);
   const metarHistory = metarData ? await getHistoricalMetar(metarData.icaoId, 48) : [];
   
-  // Find the highest temperature observed in the last 24 hours of METAR
-  const oneDayAgoSec = (Date.now() - 24 * 60 * 60 * 1000) / 1000;
-  const recentMetars = metarHistory.filter(obs => obs.obsTime >= oneDayAgoSec);
-  const highestRealTemp = recentMetars.length > 0 
-    ? Math.max(...recentMetars.map(obs => obs.temp)) 
-    : null;
+  // 4-stage METAR temperature estimation (QC → diurnal awareness → peak projection → bias correction)
+  const tempEstimate = metarHistory.length > 0 ? computeTempEstimate(metarHistory) : null;
+
   
   const isSingapore = cityName.includes("Singapore") || cityName.includes("WSSS");
   const weatherHistory2026 = isSingapore ? await getWeatherHistory2026() : [];
@@ -282,7 +280,7 @@ export default async function Home(props: { searchParams: SearchParams }) {
             {isSingapore && (
               <div className="md:col-span-12">
                 <OUMeanReversionPanel
-                  highestRealTemp={highestRealTemp}
+                  tempEstimate={tempEstimate}
                   todayForecastTemp={weatherData?.daily?.temperature_2m_max?.[0] ?? null}
                 />
               </div>

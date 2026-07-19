@@ -68,47 +68,28 @@ const Z_SCORES: Record<string, number> = {
   p95:  1.6449,
 };
 
+import type { TempEstimate } from "@/services/metarService";
+import { OU_MONTHS } from "@/lib/ouParams";
+
 interface OUMeanReversionPanelProps {
-  highestRealTemp: number | null;
+  tempEstimate: TempEstimate | null;
   todayForecastTemp: number | null;
 }
 
-interface MonthData {
-  month: string;
-  shortMonth: string;
-  mean: number;
-  sigma: number;
-  minRange: number;
-  maxRange: number;
-  season: string;
-}
 
-const MONTHS_DATA: MonthData[] = [
-  { month: "Januari", shortMonth: "Jan", mean: 29.48, sigma: 1.91, minRange: 27.57, maxRange: 31.39, season: "Monsun Timur Laut (Basah & Dingin)" },
-  { month: "Februari", shortMonth: "Feb", mean: 31.00, sigma: 1.25, minRange: 29.75, maxRange: 32.25, season: "Transisi (Mulai Kering)" },
-  { month: "Maret", shortMonth: "Mar", mean: 31.26, sigma: 2.03, minRange: 29.23, maxRange: 33.29, season: "Transisi (Volatilitas Tinggi)" },
-  { month: "April", shortMonth: "Apr", mean: 32.04, sigma: 1.49, minRange: 30.55, maxRange: 33.53, season: "Periode Equinox (Panas)" },
-  { month: "Mei", shortMonth: "Mei", mean: 32.06, sigma: 1.17, minRange: 30.89, maxRange: 33.23, season: "Awal Monsun Barat Daya (Panas)" },
-  { month: "Juni", shortMonth: "Jun", mean: 31.74, sigma: 1.14, minRange: 30.60, maxRange: 32.88, season: "Monsun Barat Daya (Stabil Panas)" },
-  { month: "Juli", shortMonth: "Jul", mean: 31.56, sigma: 1.18, minRange: 30.38, maxRange: 32.74, season: "Tengah Tahun (Stabil/Jinak)" },
-  { month: "Agustus", shortMonth: "Agu", mean: 31.35, sigma: 1.13, minRange: 30.22, maxRange: 32.48, season: "Tengah Tahun (Stabil/Jinak)" },
-  { month: "September", shortMonth: "Sep", mean: 31.34, sigma: 1.29, minRange: 30.05, maxRange: 32.63, season: "Transisi" },
-  { month: "Oktober", shortMonth: "Okt", mean: 32.02, sigma: 1.33, minRange: 30.69, maxRange: 33.35, season: "Transisi Volatil (Mulai Basah)" },
-  { month: "November", shortMonth: "Nov", mean: 31.44, sigma: 1.36, minRange: 30.08, maxRange: 32.80, season: "Awal Monsun Timur Laut (Mulai Dingin)" },
-  { month: "Desember", shortMonth: "Des", mean: 30.71, sigma: 1.49, minRange: 29.22, maxRange: 32.20, season: "Monsun Timur Laut (Basah & Dingin)" }
-];
-
-export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTemp }: OUMeanReversionPanelProps) {
+export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }: OUMeanReversionPanelProps) {
   // Dapatkan bulan berjalan secara otomatis (0-11)
   const currentMonthIdx = useMemo(() => new Date().getMonth(), []);
   const [selectedMonthIdx, setSelectedMonthIdx] = useState<number>(currentMonthIdx);
   const [showExplanation, setShowExplanation] = useState(false);
 
-  const selectedData = MONTHS_DATA[selectedMonthIdx];
-  const activeMonthData = MONTHS_DATA[currentMonthIdx];
+  const selectedData = OU_MONTHS[selectedMonthIdx];
+  const activeMonthData = OU_MONTHS[currentMonthIdx];
 
-  const referenceTemp = highestRealTemp ?? todayForecastTemp;
-  const isRealObs = highestRealTemp !== null;
+  // Use corrected peak from pipeline; fall back to ECMWF forecast if no METAR
+  const referenceTemp = tempEstimate !== null ? tempEstimate.correctedPeak : todayForecastTemp;
+  const isRealObs = tempEstimate !== null;
+
 
   // Hitung analisis deviasi jika forecast atau real temp hari ini tersedia
   const deviationAnalysis = useMemo(() => {
@@ -161,7 +142,7 @@ export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTem
 
   // Persiapkan data untuk chart Recharts
   const chartData = useMemo(() => {
-    return MONTHS_DATA.map((d, index) => ({
+    return OU_MONTHS.map((d, index) => ({
       name: d.shortMonth,
       fullName: d.month,
       "Jangkar Gravitasi (\u03BC)": d.mean,
@@ -172,6 +153,7 @@ export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTem
       isSelected: index === selectedMonthIdx,
     }));
   }, [selectedMonthIdx]);
+
 
   return (
     <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-6 shadow-sm border border-slate-100 dark:border-slate-800 transition-colors w-full space-y-6 text-slate-800 dark:text-slate-100">
@@ -257,7 +239,7 @@ export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTem
                   dataKey="name" 
                   tick={{ fontSize: 9, fill: "#94a3b8" }}
                   onClick={(e) => {
-                    const idx = MONTHS_DATA.findIndex(m => m.shortMonth === e.value);
+                    const idx = OU_MONTHS.findIndex(m => m.shortMonth === e.value);
                     if (idx !== -1) setSelectedMonthIdx(idx);
                   }}
                   className="cursor-pointer"
@@ -326,7 +308,7 @@ export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTem
                 />
                 {/* Visual marker line for selected month */}
                 <ReferenceLine 
-                  x={MONTHS_DATA[selectedMonthIdx].shortMonth} 
+                  x={OU_MONTHS[selectedMonthIdx].shortMonth} 
                   stroke="rgba(99, 102, 241, 0.45)" 
                   strokeDasharray="3 3"
                 />
@@ -414,6 +396,51 @@ export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTem
               Analisis Deviasi Mean Reversion Real-Time ({activeMonthData.month})
             </span>
           </div>
+
+          {/* ── Data Quality Indicator ── */}
+          {tempEstimate && (
+            <div className="flex flex-wrap items-center gap-2 text-[10px]">
+              {/* Source badge */}
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold border ${
+                tempEstimate.source === "OBSERVED"
+                  ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
+                  : "bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800"
+              }`}>
+                {tempEstimate.source === "OBSERVED" ? "✓ OBSERVASI" : "~ ESTIMASI DIURNAL"}
+              </span>
+              {/* Confidence badge */}
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold border ${
+                tempEstimate.confidence === "HIGH"
+                  ? "bg-green-50 dark:bg-green-950/30 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800"
+                  : tempEstimate.confidence === "MED"
+                  ? "bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800"
+                  : "bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800"
+              }`}>
+                Kepercayaan: {tempEstimate.confidence}
+              </span>
+              {/* Stats */}
+              <span className="text-slate-400 font-mono">
+                {tempEstimate.currentHourSGT.toString().padStart(2,"0")}:00 SGT
+                {" · "}
+                {tempEstimate.dataQuality.valid}/{tempEstimate.dataQuality.total} obs valid
+                {tempEstimate.dataQuality.removed > 0 && (
+                  <span className="text-rose-400 ml-1">(−{tempEstimate.dataQuality.removed} QC)</span>
+                )}
+              </span>
+              {/* Peak status */}
+              <span className={`font-semibold ${
+                tempEstimate.isPeakReached ? "text-emerald-500" : "text-amber-500"
+              }`}>
+                {tempEstimate.isPeakReached ? "✓ Puncak tercapai" : "⏳ Menuju puncak"}
+              </span>
+              {/* Correction note */}
+              {tempEstimate.biasCorrection !== 0 && (
+                <span className="text-slate-400">
+                  Koreksi bias: {tempEstimate.biasCorrection > 0 ? "+" : ""}{tempEstimate.biasCorrection.toFixed(2)} °C
+                </span>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {/* Forecast vs Mean */}
@@ -619,7 +646,7 @@ export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTem
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
-              {MONTHS_DATA.map((d, index) => {
+              {OU_MONTHS.map((d, index) => {
                 const isCurrent = index === currentMonthIdx;
                 const isSelected = index === selectedMonthIdx;
                 
