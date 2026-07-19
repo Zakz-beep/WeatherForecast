@@ -8,6 +8,7 @@ import { getNearbyMetar, getHistoricalMetar } from "@/services/metarService";
 import HistoryChart from "@/components/HistoryChart";
 import History2026Chart from "@/components/History2026Chart";
 import BiasCorrectionPanel from "@/components/BiasCorrectionPanel";
+import OUMeanReversionPanel from "@/components/OUMeanReversionPanel";
 import { Plane, Compass, BarChart3, ArrowLeft, ExternalLink, MapPin } from "lucide-react";
 
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>
@@ -262,6 +263,15 @@ export default async function Home(props: { searchParams: SearchParams }) {
                   data={weatherHistory2026}
                   todayForecastTemp={weatherData?.daily?.temperature_2m_max?.[0] ?? null}
                   todayForecastWind={weatherData?.daily?.wind_speed_10m_max?.[0] ?? null}
+                />
+              </div>
+            )}
+
+            {/* Ornstein-Uhlenbeck Mean Reversion Table/Panel */}
+            {isSingapore && (
+              <div className="md:col-span-12">
+                <OUMeanReversionPanel
+                  todayForecastTemp={weatherData?.daily?.temperature_2m_max?.[0] ?? null}
                 />
               </div>
             )}
