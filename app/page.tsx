@@ -180,6 +180,13 @@ export default async function Home(props: { searchParams: SearchParams }) {
   const ecmwfHistory = await getHourlyHistory(lat, lon);
   const metarHistory = metarData ? await getHistoricalMetar(metarData.icaoId, 48) : [];
   
+  // Find the highest temperature observed in the last 24 hours of METAR
+  const oneDayAgoSec = (Date.now() - 24 * 60 * 60 * 1000) / 1000;
+  const recentMetars = metarHistory.filter(obs => obs.obsTime >= oneDayAgoSec);
+  const highestRealTemp = recentMetars.length > 0 
+    ? Math.max(...recentMetars.map(obs => obs.temp)) 
+    : null;
+  
   const isSingapore = cityName.includes("Singapore") || cityName.includes("WSSS");
   const weatherHistory2026 = isSingapore ? await getWeatherHistory2026() : [];
 
@@ -275,6 +282,7 @@ export default async function Home(props: { searchParams: SearchParams }) {
             {isSingapore && (
               <div className="md:col-span-12">
                 <OUMeanReversionPanel
+                  highestRealTemp={highestRealTemp}
                   todayForecastTemp={weatherData?.daily?.temperature_2m_max?.[0] ?? null}
                 />
               </div>

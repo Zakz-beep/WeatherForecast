@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 interface OUMeanReversionPanelProps {
+  highestRealTemp: number | null;
   todayForecastTemp: number | null;
 }
 
@@ -53,7 +54,7 @@ const MONTHS_DATA: MonthData[] = [
   { month: "Desember", shortMonth: "Des", mean: 30.71, sigma: 1.49, minRange: 29.22, maxRange: 32.20, season: "Monsun Timur Laut (Basah & Dingin)" }
 ];
 
-export default function OUMeanReversionPanel({ todayForecastTemp }: OUMeanReversionPanelProps) {
+export default function OUMeanReversionPanel({ highestRealTemp, todayForecastTemp }: OUMeanReversionPanelProps) {
   // Dapatkan bulan berjalan secara otomatis (0-11)
   const currentMonthIdx = useMemo(() => new Date().getMonth(), []);
   const [selectedMonthIdx, setSelectedMonthIdx] = useState<number>(currentMonthIdx);
@@ -62,18 +63,21 @@ export default function OUMeanReversionPanel({ todayForecastTemp }: OUMeanRevers
   const selectedData = MONTHS_DATA[selectedMonthIdx];
   const activeMonthData = MONTHS_DATA[currentMonthIdx];
 
-  // Hitung analisis deviasi jika forecast hari ini tersedia
+  const referenceTemp = highestRealTemp ?? todayForecastTemp;
+  const isRealObs = highestRealTemp !== null;
+
+  // Hitung analisis deviasi jika forecast atau real temp hari ini tersedia
   const deviationAnalysis = useMemo(() => {
-    if (todayForecastTemp == null) return null;
+    if (referenceTemp == null) return null;
     
-    // Bandingkan forecast dengan jangkar gravitasi bulan ini (activeMonthData.mean)
-    const deviation = todayForecastTemp - activeMonthData.mean;
+    // Bandingkan dengan jangkar gravitasi bulan ini (activeMonthData.mean)
+    const deviation = referenceTemp - activeMonthData.mean;
     const absDev = Math.abs(deviation);
     
     // Kecepatan reversion teoritis untuk suhu harian Singapura (diperkirakan ~0.25 / hari)
     const theta = 0.25; 
     const correctionNextDay = deviation * theta;
-    const expectedTempNextDay = todayForecastTemp - correctionNextDay;
+    const expectedTempNextDay = referenceTemp - correctionNextDay;
 
     return {
       deviation,
@@ -83,7 +87,7 @@ export default function OUMeanReversionPanel({ todayForecastTemp }: OUMeanRevers
       isAbove: deviation > 0,
       isWithinVol: absDev <= activeMonthData.sigma,
     };
-  }, [todayForecastTemp, activeMonthData]);
+  }, [referenceTemp, activeMonthData]);
 
   // Persiapkan data untuk chart Recharts
   const chartData = useMemo(() => {
@@ -329,11 +333,10 @@ export default function OUMeanReversionPanel({ todayForecastTemp }: OUMeanRevers
             </button>
           </div>
         </div>
-
       </div>
 
       {/* Live Forecast Mean Reversion Deviation Analysis */}
-      {deviationAnalysis && todayForecastTemp != null && (
+      {deviationAnalysis && referenceTemp != null && (
         <div className="bg-slate-50/70 dark:bg-slate-950/20 border border-slate-200/50 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3.5">
           <div className="flex items-center gap-2">
             <div className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
@@ -346,13 +349,18 @@ export default function OUMeanReversionPanel({ todayForecastTemp }: OUMeanRevers
             {/* Forecast vs Mean */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-xl p-3 flex flex-col justify-between">
               <div>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block">Prakiraan Hari Ini</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block">
+                  {isRealObs ? "Suhu Maks Riil (METAR)" : "Prakiraan Suhu Maks"}
+                </span>
                 <span className="text-lg font-extrabold text-slate-950 dark:text-white mt-1">
-                  {todayForecastTemp.toFixed(1)} °C
+                  {referenceTemp.toFixed(1)} °C
                 </span>
               </div>
-              <span className="text-[10px] text-slate-400 mt-2">
-                ECMWF Max Temp H-0
+              <span className="text-[10px] text-slate-400 mt-2 border-t border-slate-100 dark:border-slate-800 pt-1 flex items-center justify-between">
+                <span>Sumber:</span>
+                <span className="font-semibold text-indigo-500 dark:text-indigo-400">
+                  {isRealObs ? "Sensor Bandara" : "Model ECMWF"}
+                </span>
               </span>
             </div>
 
@@ -361,7 +369,7 @@ export default function OUMeanReversionPanel({ todayForecastTemp }: OUMeanRevers
               <div>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block">Deviasi dari Jangkar</span>
                 <div className="flex items-center gap-1.5 mt-1">
-                  <span className={`text-lg font-extrabold ${deviationAnalysis.isAbove ? 'text-amber-500' : 'text-blue-505'}`}>
+                  <span className={`text-lg font-extrabold ${deviationAnalysis.isAbove ? 'text-amber-500' : 'text-blue-550'}`}>
                     {deviationAnalysis.deviation > 0 ? "+" : ""}
                     {deviationAnalysis.deviation.toFixed(2)} °C
                   </span>
@@ -369,7 +377,7 @@ export default function OUMeanReversionPanel({ todayForecastTemp }: OUMeanRevers
                     deviationAnalysis.isAbove ? (
                       <TrendingUp size={16} className="text-amber-500" />
                     ) : (
-                      <TrendingDown size={16} className="text-blue-505" />
+                      <TrendingDown size={16} className="text-blue-550" />
                     )
                   )}
                 </div>
@@ -397,7 +405,7 @@ export default function OUMeanReversionPanel({ todayForecastTemp }: OUMeanRevers
             <span className="font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1 mb-1">
               <Target size={13} /> Analisis Prediktif OU
             </span>
-            Suhu prakiraan hari ini ({todayForecastTemp.toFixed(1)} °C) menyimpang sebesar{" "}
+            Suhu {isRealObs ? "maksimum riil hari ini berdasarkan METAR" : "prakiraan hari ini"} ({referenceTemp.toFixed(1)} °C) menyimpang sebesar{" "}
             <strong>
               {deviationAnalysis.deviation > 0 ? "+" : ""}
               {deviationAnalysis.deviation.toFixed(2)} °C
