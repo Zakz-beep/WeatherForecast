@@ -43,7 +43,7 @@ function getFlightCategoryInfo(fltCat: string) {
 }
 
 // Translate METAR weather phenomena strings
-function translateWxString(wxStr: string | null) {
+export function translateWxString(wxStr: string | null) {
   if (!wxStr) return "Cuaca Cerah / Kondusif";
   
   const translations: { [key: string]: string } = {

@@ -217,7 +217,11 @@ export default async function Home(props: { searchParams: SearchParams }) {
           <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
             {/* Weather Card */}
             <div className="md:col-span-12">
-              <WeatherCard data={weatherData} cityName={cityName} />
+              <WeatherCard 
+                data={weatherData} 
+                cityName={cityName} 
+                metarData={metarData} 
+              />
             </div>
             
             {/* Aviation Weather (METAR) */}
