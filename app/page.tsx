@@ -17,8 +17,9 @@ import {
   computeRollingMetrics,
   type OUPredictionRow,
 } from "@/lib/ouBacktest";
-import { detectRegime } from "@/components/OUMeanReversionPanel";
+import { detectRegime } from "@/lib/ouRegime";
 import { OU_MONTHS } from "@/lib/ouParams";
+import { supabase } from "@/lib/supabaseClient";
 import { Plane, Compass, BarChart3, ArrowLeft, ExternalLink, MapPin } from "lucide-react";
 
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>
@@ -242,13 +243,12 @@ export default async function Home(props: { searchParams: SearchParams }) {
       confidence_score: null, // computed client-side only
     };
 
-    // Fire and forget — don't block page render
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    fetch(`${baseUrl}/api/ou-log`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(() => { /* silent fail */ });
+    // ── Log today's OU prediction directly via Supabase (no self-fetch) ──────
+    try {
+      await supabase.from("ou_predictions").upsert([payload], { onConflict: "date" });
+    } catch {
+      // Silent fail — backtesting is non-critical
+    }
   }
 
   return (
