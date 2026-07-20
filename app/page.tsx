@@ -3,13 +3,22 @@ import CitySearch from "@/components/CitySearch";
 import WeatherCard from "@/components/WeatherCard";
 import MetarWidget from "@/components/MetarWidget";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { getWeather, getHourlyHistory, getWeatherHistory2026 } from "@/services/weatherService";
+import { getWeather, getHourlyHistory, getWeatherHistory2026, getOUPredictions } from "@/services/weatherService";
 import { getNearbyMetar, getHistoricalMetar, computeTempEstimate } from "@/services/metarService";
 
 import HistoryChart from "@/components/HistoryChart";
 import History2026Chart from "@/components/History2026Chart";
 import BiasCorrectionPanel from "@/components/BiasCorrectionPanel";
 import OUMeanReversionPanel from "@/components/OUMeanReversionPanel";
+import OUBacktestPanel from "@/components/OUBacktestPanel";
+import {
+  joinPredictionsWithActuals,
+  computeBacktestMetrics,
+  computeRollingMetrics,
+  type OUPredictionRow,
+} from "@/lib/ouBacktest";
+import { detectRegime } from "@/components/OUMeanReversionPanel";
+import { OU_MONTHS } from "@/lib/ouParams";
 import { Plane, Compass, BarChart3, ArrowLeft, ExternalLink, MapPin } from "lucide-react";
 
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>
@@ -188,6 +197,60 @@ export default async function Home(props: { searchParams: SearchParams }) {
   const isSingapore = cityName.includes("Singapore") || cityName.includes("WSSS");
   const weatherHistory2026 = isSingapore ? await getWeatherHistory2026() : [];
 
+  // ── OU Backtesting data ────────────────────────────────────────
+  const ouPredictionsRaw = isSingapore ? await getOUPredictions() : [];
+  const backtestRows = joinPredictionsWithActuals(
+    ouPredictionsRaw as OUPredictionRow[],
+    weatherHistory2026
+  );
+  const backtestMetrics = computeBacktestMetrics(backtestRows);
+  const backtestRolling = computeRollingMetrics(backtestRows, 30);
+
+  // ── Log today's OU prediction (fire-and-forget) ────────────────────
+  if (isSingapore && tempEstimate) {
+    const currentMonthIdx = new Date().getMonth();
+    const activeMonth = OU_MONTHS[currentMonthIdx];
+    const regime = detectRegime(currentMonthIdx);
+    const theta = regime.dynamicTheta;
+
+    // Compute OU forecast (same math as OUMeanReversionPanel)
+    const dt = 1;
+    const expNeg = Math.exp(-theta * dt);
+    const exp2Neg = Math.exp(-2 * theta * dt);
+    const ouMean = activeMonth.mean + (tempEstimate.correctedPeak - activeMonth.mean) * expNeg;
+    const ouStd = Math.sqrt((activeMonth.sigma ** 2 * (1 - exp2Neg)) / (2 * theta));
+
+    const Z_P10 = -1.2816;
+    const Z_P90 =  1.2816;
+
+    const today = new Date();
+    const todayStr = today.toISOString().split("T")[0];
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split("T")[0];
+
+    const payload = {
+      date: todayStr,
+      target_date: tomorrowStr,
+      predicted_p50: parseFloat(ouMean.toFixed(2)),
+      predicted_p10: parseFloat((ouMean + Z_P10 * ouStd).toFixed(2)),
+      predicted_p90: parseFloat((ouMean + Z_P90 * ouStd).toFixed(2)),
+      ou_mean: parseFloat(ouMean.toFixed(2)),
+      theta: parseFloat(theta.toFixed(3)),
+      regime: regime.labelShort,
+      source_temp: parseFloat(tempEstimate.correctedPeak.toFixed(2)),
+      confidence_score: null, // computed client-side only
+    };
+
+    // Fire and forget — don't block page render
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    fetch(`${baseUrl}/api/ou-log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => { /* silent fail */ });
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-16 transition-colors duration-300">
       {/* Dashboard Sticky Header */}
@@ -282,6 +345,17 @@ export default async function Home(props: { searchParams: SearchParams }) {
                 <OUMeanReversionPanel
                   tempEstimate={tempEstimate}
                   todayForecastTemp={weatherData?.daily?.temperature_2m_max?.[0] ?? null}
+                />
+              </div>
+            )}
+
+            {/* OU Backtesting & Accuracy Score */}
+            {isSingapore && (
+              <div className="md:col-span-12">
+                <OUBacktestPanel
+                  rows={backtestRows}
+                  metrics={backtestMetrics}
+                  rolling={backtestRolling}
                 />
               </div>
             )}

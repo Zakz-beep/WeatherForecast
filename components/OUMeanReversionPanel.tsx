@@ -24,6 +24,12 @@ import {
   ChevronRight,
   BarChart2,
   Zap,
+  Wind,
+  Thermometer,
+  Activity,
+  ShieldCheck,
+  AlertTriangle,
+  Clock,
 } from "lucide-react";
 
 // ── Pure Math Helpers ──────────────────────────────────────────────────────────
@@ -68,6 +74,202 @@ const Z_SCORES: Record<string, number> = {
   p95:  1.6449,
 };
 
+// ── Regime Detection ─────────────────────────────────────────────────────────
+
+export type MonsoonRegime =
+  | "NE_MONSOON"      // Nov–Jan: Northeast Monsoon (wet & cool)
+  | "NE_TRANSITION"   // Feb–Mar: Transition away from NE (drying, volatile)
+  | "EQUINOX_HEAT"    // Apr–May: Equinox / hottest period
+  | "SW_MONSOON"      // Jun–Sep: Southwest Monsoon (stable, warm)
+  | "SW_TRANSITION";  // Oct:     Transition back to NE (volatile, wetting)
+
+export interface RegimeInfo {
+  regime: MonsoonRegime;
+  label: string;
+  labelShort: string;
+  description: string;
+  /** Dynamic mean-reversion speed θ calibrated per regime */
+  dynamicTheta: number;
+  thetaRationale: string;
+  color: string;        // tailwind text color class
+  bgColor: string;      // tailwind bg color class
+  borderColor: string;  // tailwind border color class
+  icon: "wind" | "thermometer" | "activity" | "zap" | "layers";
+}
+
+/** Returns the monsoon regime + dynamic θ for a given 0-indexed month */
+export function detectRegime(monthIdx: number): RegimeInfo {
+  // Nov=10, Dec=11, Jan=0
+  if (monthIdx === 11 || monthIdx === 0 || monthIdx === 10) {
+    return {
+      regime: "NE_MONSOON",
+      label: "Monsun Timur Laut",
+      labelShort: "NE Monsoon",
+      description:
+        "Periode basah & dingin. Curah hujan tinggi, tutupan awan tebal, dan suhu lebih rendah menekan puncak diurnal. Daya tarik OU lebih kuat karena anomali suhu cepat teredam oleh hujan konvektif.",
+      dynamicTheta: 0.32,
+      thetaRationale: "θ tinggi (0.32): anomali suhu teredam cepat oleh hujan konvektif.",
+      color: "text-sky-600 dark:text-sky-400",
+      bgColor: "bg-sky-50 dark:bg-sky-950/30",
+      borderColor: "border-sky-200 dark:border-sky-800",
+      icon: "wind",
+    };
+  }
+  if (monthIdx === 1 || monthIdx === 2) {
+    return {
+      regime: "NE_TRANSITION",
+      label: "Transisi NE → SW",
+      labelShort: "Transisi",
+      description:
+        "Periode volatilitas tertinggi — σ meningkat, tutupan awan tidak menentu. Model OU membutuhkan θ yang lebih rendah karena anomali suhu bisa bertahan lebih lama akibat perubahan pola angin.",
+      dynamicTheta: 0.20,
+      thetaRationale: "θ rendah (0.20): anomali suhu lebih persisten, volatilitas σ tinggi.",
+      color: "text-violet-600 dark:text-violet-400",
+      bgColor: "bg-violet-50 dark:bg-violet-950/30",
+      borderColor: "border-violet-200 dark:border-violet-800",
+      icon: "activity",
+    };
+  }
+  if (monthIdx === 3 || monthIdx === 4) {
+    return {
+      regime: "EQUINOX_HEAT",
+      label: "Periode Ekuinoks (Panas)",
+      labelShort: "Ekuinoks",
+      description:
+        "Puncak suhu tahunan. Radiasi matahari maksimum, amplitudo diurnal terbesar. Suhu bergerak jauh di atas μ namun tetap kuat mean-revert karena driving force surya sangat konsisten.",
+      dynamicTheta: 0.28,
+      thetaRationale: "θ sedang (0.28): panas ekstrem namun radiasi konsisten menjaga pola reversion.",
+      color: "text-rose-600 dark:text-rose-400",
+      bgColor: "bg-rose-50 dark:bg-rose-950/30",
+      borderColor: "border-rose-200 dark:border-rose-800",
+      icon: "thermometer",
+    };
+  }
+  if (monthIdx >= 5 && monthIdx <= 8) {
+    return {
+      regime: "SW_MONSOON",
+      label: "Monsun Barat Daya",
+      labelShort: "SW Monsoon",
+      description:
+        "Periode paling stabil sepanjang tahun. Angin Southwesterly membawa udara kering relatif, suhu stabil di kisaran μ dengan σ kecil. θ sedikit lebih rendah karena variasi harian lebih jinak.",
+      dynamicTheta: 0.22,
+      thetaRationale: "θ moderat-rendah (0.22): variabilitas rendah, suhu sangat stabil di dekat μ.",
+      color: "text-emerald-600 dark:text-emerald-400",
+      bgColor: "bg-emerald-50 dark:bg-emerald-950/30",
+      borderColor: "border-emerald-200 dark:border-emerald-800",
+      icon: "layers",
+    };
+  }
+  // Oktober = monthIdx 9
+  return {
+    regime: "SW_TRANSITION",
+    label: "Transisi SW → NE",
+    labelShort: "Transisi",
+    description:
+      "Periode mulai basah kembali. Konveksi sore hari meningkat, hujan petir lebih sering. Anomali suhu moderat namun bisa bertahan lebih lama karena perubahan massa udara.",
+    dynamicTheta: 0.22,
+    thetaRationale: "θ moderat (0.22): hujan sore menekan puncak, anomali semi-persisten.",
+    color: "text-amber-600 dark:text-amber-400",
+    bgColor: "bg-amber-50 dark:bg-amber-950/30",
+    borderColor: "border-amber-200 dark:border-amber-800",
+    icon: "zap",
+  };
+}
+
+// ── Confidence Decay Indicator ────────────────────────────────────────────────
+
+export interface ConfidenceDecay {
+  /** 0–100: how mature/reliable the current estimate is */
+  score: number;
+  /** Breakdown components */
+  components: {
+    timeMaturity: number;    // 0–40 pts: how far into the day (post-peak = full)
+    dataVolume: number;      // 0–35 pts: valid obs count relative to expected
+    sourceQuality: number;   // 0–15 pts: OBSERVED > ESTIMATED
+    peakConfirmed: number;   // 0–10 pts: is peak definitively reached?
+  };
+  tier: "MATURE" | "DEVELOPING" | "EARLY";
+  tierLabel: string;
+  tierColor: string;
+  tierBg: string;
+  tierBorder: string;
+  /** Textual explanation of current state */
+  interpretation: string;
+}
+
+/**
+ * Compute a 0–100 confidence decay score for the current TempEstimate.
+ * Score rises as the day progresses, obs count grows, and peak is confirmed.
+ */
+export function computeConfidenceDecay(
+  estimate: TempEstimate,
+  expectedObs: number = 48  // WSSS typically reports every 30 min → 48/day
+): ConfidenceDecay {
+  const { currentHourSGT, isPeakReached, source, confidence, dataQuality } = estimate;
+
+  // Component A: Time maturity (0–40 pts)
+  // Pre-peak hours (before 14:00 SGT) decay linearly; post-peak is full score.
+  const PEAK_HOUR = 14;
+  const timeRatio = Math.min(currentHourSGT / PEAK_HOUR, 1.0);
+  const timeBonus = isPeakReached ? 40 : timeRatio * 32; // max 40, pre-peak max 32
+  const timeMaturity = Math.round(timeBonus);
+
+  // Component B: Data volume (0–35 pts)
+  const obsRatio = Math.min(dataQuality.valid / Math.max(expectedObs, 1), 1.0);
+  const dataVolume = Math.round(obsRatio * 35);
+
+  // Component C: Source quality (0–15 pts)
+  const sourceQuality = source === "OBSERVED" ? 15 : 5;
+
+  // Component D: Peak confirmed (0–10 pts)
+  const peakConfirmed = isPeakReached ? 10 : (currentHourSGT >= 12 ? 4 : 0);
+
+  const score = Math.min(timeMaturity + dataVolume + sourceQuality + peakConfirmed, 100);
+
+  let tier: ConfidenceDecay["tier"];
+  let tierLabel: string;
+  let tierColor: string;
+  let tierBg: string;
+  let tierBorder: string;
+  let interpretation: string;
+
+  if (score >= 75) {
+    tier = "MATURE";
+    tierLabel = "Estimasi Matang";
+    tierColor = "text-emerald-600 dark:text-emerald-400";
+    tierBg = "bg-emerald-50 dark:bg-emerald-950/30";
+    tierBorder = "border-emerald-200 dark:border-emerald-800";
+    interpretation = isPeakReached
+      ? `Suhu puncak hari ini telah terkonfirmasi dari ${dataQuality.valid} observasi METAR. Nilai yang digunakan model OU sangat representatif.`
+      : `Estimasi sangat matang dengan ${dataQuality.valid} obs valid. Data diurnal mendukung proyeksi puncak yang akurat.`;
+  } else if (score >= 45) {
+    tier = "DEVELOPING";
+    tierLabel = "Estimasi Berkembang";
+    tierColor = "text-amber-600 dark:text-amber-400";
+    tierBg = "bg-amber-50 dark:bg-amber-950/30";
+    tierBorder = "border-amber-200 dark:border-amber-800";
+    interpretation = `Estimasi masih berkembang (${currentHourSGT.toString().padStart(2,"0")}:00 SGT, ${dataQuality.valid} obs valid). Proyeksi OU dapat berubah seiring bertambahnya data observasi.`;
+  } else {
+    tier = "EARLY";
+    tierLabel = "Estimasi Awal";
+    tierColor = "text-rose-600 dark:text-rose-400";
+    tierBg = "bg-rose-50 dark:bg-rose-950/30";
+    tierBorder = "border-rose-200 dark:border-rose-800";
+    interpretation = `Data masih sangat terbatas (${dataQuality.valid}/${dataQuality.total} obs, ${currentHourSGT.toString().padStart(2,"0")}:00 SGT). Gunakan prediksi OU dengan kehati-hatian ekstra.`;
+  }
+
+  return {
+    score,
+    components: { timeMaturity, dataVolume, sourceQuality, peakConfirmed },
+    tier,
+    tierLabel,
+    tierColor,
+    tierBg,
+    tierBorder,
+    interpretation,
+  };
+}
+
 import type { TempEstimate } from "@/services/metarService";
 import { OU_MONTHS } from "@/lib/ouParams";
 
@@ -78,6 +280,16 @@ interface OUMeanReversionPanelProps {
 
 
 export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }: OUMeanReversionPanelProps) {
+  // ── Regime Detection (computed once on mount) ─────────────────────────────
+  const currentMonthIdxForRegime = useMemo(() => new Date().getMonth(), []);
+  const regimeInfo = useMemo(() => detectRegime(currentMonthIdxForRegime), [currentMonthIdxForRegime]);
+
+  // ── Confidence Decay (derived from tempEstimate) ──────────────────────────
+  const confidenceDecay = useMemo(() => {
+    if (!tempEstimate) return null;
+    return computeConfidenceDecay(tempEstimate);
+  }, [tempEstimate]);
+
   // Dapatkan bulan berjalan secara otomatis (0-11)
   const currentMonthIdx = useMemo(() => new Date().getMonth(), []);
   const [selectedMonthIdx, setSelectedMonthIdx] = useState<number>(currentMonthIdx);
@@ -115,7 +327,8 @@ export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }
   }, [referenceTemp, activeMonthData]);
 
   // ── Probabilistic Forecast for Tomorrow (H+1) ─────────────────────────────
-  const theta = 0.25;
+  // Use dynamic theta from Regime Detection instead of hardcoded 0.25
+  const theta = regimeInfo.dynamicTheta;
   const probabilisticForecast = useMemo(() => {
     if (referenceTemp == null) return null;
     const { mean, std } = ouForecast(
@@ -387,6 +600,165 @@ export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }
         </div>
       </div>
 
+      {/* ── SECTION: Regime Detection ── */}
+      <div className={`rounded-2xl border p-4 sm:p-5 space-y-3 ${regimeInfo.bgColor} ${regimeInfo.borderColor}`}>
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className={`p-2 rounded-xl ${regimeInfo.bgColor} border ${regimeInfo.borderColor}`}>
+              {regimeInfo.icon === "wind"        && <Wind        size={18} className={regimeInfo.color} />}
+              {regimeInfo.icon === "thermometer" && <Thermometer size={18} className={regimeInfo.color} />}
+              {regimeInfo.icon === "activity"    && <Activity    size={18} className={regimeInfo.color} />}
+              {regimeInfo.icon === "zap"         && <Zap         size={18} className={regimeInfo.color} />}
+              {regimeInfo.icon === "layers"      && <Layers      size={18} className={regimeInfo.color} />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Regime Detection</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${regimeInfo.bgColor} ${regimeInfo.color} ${regimeInfo.borderColor}`}>
+                  {regimeInfo.labelShort}
+                </span>
+              </div>
+              <p className={`text-sm font-extrabold mt-0.5 ${regimeInfo.color}`}>{regimeInfo.label}</p>
+            </div>
+          </div>
+          {/* Dynamic θ badge */}
+          <div className="flex flex-col items-start sm:items-end gap-0.5">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">θ Dinamis (Regime-Adapted)</span>
+            <span className={`text-xl font-black font-mono ${regimeInfo.color}`}>{regimeInfo.dynamicTheta.toFixed(2)}</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">vs default 0.25</span>
+          </div>
+        </div>
+
+        {/* Description */}
+        <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+          {regimeInfo.description}
+        </p>
+
+        {/* θ rationale */}
+        <div className={`rounded-xl px-3 py-2 border text-[11px] font-semibold ${regimeInfo.color} ${regimeInfo.bgColor} ${regimeInfo.borderColor} flex items-center gap-1.5`}>
+          <Info size={12} />
+          {regimeInfo.thetaRationale}
+        </div>
+
+        {/* Regime spectrum bar */}
+        <div className="space-y-1">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Spektrum Regime Tahunan</span>
+          <div className="flex h-3 rounded-full overflow-hidden gap-px">
+            {([
+              { r: "NE_MONSOON",    w: 3, label: "NE",  bg: "bg-sky-400" },
+              { r: "NE_TRANSITION", w: 2, label: "Tr",  bg: "bg-violet-400" },
+              { r: "EQUINOX_HEAT",  w: 2, label: "Eq",  bg: "bg-rose-400" },
+              { r: "SW_MONSOON",    w: 4, label: "SW",  bg: "bg-emerald-400" },
+              { r: "SW_TRANSITION", w: 1, label: "Tr",  bg: "bg-amber-400" },
+            ] as const).map(({ r, w, bg }) => (
+              <div
+                key={r}
+                className={`${bg} transition-all duration-300 flex items-center justify-center text-[8px] font-bold text-white ${
+                  regimeInfo.regime === r ? "opacity-100 ring-2 ring-white ring-inset" : "opacity-40"
+                }`}
+                style={{ flex: w }}
+              />
+            ))}
+          </div>
+          <div className="flex justify-between text-[8px] text-slate-400 font-mono">
+            <span>NE Monsoon</span>
+            <span>Transisi</span>
+            <span>Ekuinoks</span>
+            <span>SW Monsoon</span>
+            <span>Tr</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SECTION: Confidence Decay Indicator ── */}
+      {confidenceDecay && tempEstimate && (
+        <div className={`rounded-2xl border p-4 sm:p-5 space-y-3.5 ${confidenceDecay.tierBg} ${confidenceDecay.tierBorder}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={`p-1.5 rounded-xl border ${confidenceDecay.tierBg} ${confidenceDecay.tierBorder}`}>
+                {confidenceDecay.tier === "MATURE"     && <ShieldCheck  size={16} className={confidenceDecay.tierColor} />}
+                {confidenceDecay.tier === "DEVELOPING" && <Clock        size={16} className={confidenceDecay.tierColor} />}
+                {confidenceDecay.tier === "EARLY"      && <AlertTriangle size={16} className={confidenceDecay.tierColor} />}
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Confidence Decay Indicator</span>
+                <p className={`text-sm font-extrabold ${confidenceDecay.tierColor}`}>{confidenceDecay.tierLabel}</p>
+              </div>
+            </div>
+            {/* Big score */}
+            <div className="text-right">
+              <span className={`text-3xl font-black font-mono ${confidenceDecay.tierColor}`}>
+                {confidenceDecay.score}
+              </span>
+              <span className="text-slate-400 text-sm font-bold">/100</span>
+            </div>
+          </div>
+
+          {/* Main progress bar */}
+          <div className="space-y-1.5">
+            <div className="relative h-4 rounded-full overflow-hidden bg-slate-200/60 dark:bg-slate-800">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ease-out ${
+                  confidenceDecay.tier === "MATURE"
+                    ? "bg-gradient-to-r from-emerald-400 to-emerald-500"
+                    : confidenceDecay.tier === "DEVELOPING"
+                    ? "bg-gradient-to-r from-amber-400 to-amber-500"
+                    : "bg-gradient-to-r from-rose-400 to-rose-500"
+                }`}
+                style={{ width: `${confidenceDecay.score}%` }}
+              />
+              {/* 75% threshold marker */}
+              <div className="absolute top-0 bottom-0 w-px bg-white/50" style={{ left: "75%" }} />
+              {/* 45% threshold marker */}
+              <div className="absolute top-0 bottom-0 w-px bg-white/30" style={{ left: "45%" }} />
+            </div>
+            <div className="flex justify-between text-[9px] text-slate-400 font-mono">
+              <span>0</span>
+              <span className="text-rose-400">45 (Early)</span>
+              <span className="text-amber-400">75 (Mature)</span>
+              <span>100</span>
+            </div>
+          </div>
+
+          {/* Component breakdown */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {([
+              { label: "Kematangan Waktu", pts: confidenceDecay.components.timeMaturity,  max: 40, hint: `Jam ${tempEstimate.currentHourSGT.toString().padStart(2,"0")}:00 SGT` },
+              { label: "Volume Obs",        pts: confidenceDecay.components.dataVolume,    max: 35, hint: `${tempEstimate.dataQuality.valid}/${tempEstimate.dataQuality.total} obs` },
+              { label: "Sumber Data",       pts: confidenceDecay.components.sourceQuality, max: 15, hint: tempEstimate.source === "OBSERVED" ? "Observasi" : "Estimasi" },
+              { label: "Konfirmasi Puncak", pts: confidenceDecay.components.peakConfirmed, max: 10, hint: tempEstimate.isPeakReached ? "Tercapai ✓" : "Belum" },
+            ] as const).map(({ label, pts, max, hint }) => (
+              <div key={label} className="bg-white/50 dark:bg-slate-900/40 border border-slate-100/60 dark:border-slate-800 rounded-xl p-2.5 flex flex-col gap-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{label}</span>
+                <div className="flex items-end justify-between">
+                  <span className={`text-base font-black font-mono ${confidenceDecay.tierColor}`}>{pts}</span>
+                  <span className="text-[9px] text-slate-400 font-mono">/{max}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-200/60 dark:bg-slate-700 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      confidenceDecay.tier === "MATURE"
+                        ? "bg-emerald-400"
+                        : confidenceDecay.tier === "DEVELOPING"
+                        ? "bg-amber-400"
+                        : "bg-rose-400"
+                    }`}
+                    style={{ width: `${(pts / max) * 100}%` }}
+                  />
+                </div>
+                <span className="text-[9px] text-slate-500 dark:text-slate-400">{hint}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Interpretation text */}
+          <div className={`rounded-xl px-3 py-2.5 border text-xs leading-relaxed text-slate-600 dark:text-slate-400 ${confidenceDecay.tierBg} ${confidenceDecay.tierBorder} flex items-start gap-1.5`}>
+            <Info size={12} className={`mt-0.5 shrink-0 ${confidenceDecay.tierColor}`} />
+            {confidenceDecay.interpretation}
+          </div>
+        </div>
+      )}
+
       {/* Live Forecast Mean Reversion Deviation Analysis */}
       {deviationAnalysis && referenceTemp != null && (
         <div className="bg-slate-50/70 dark:bg-slate-950/20 border border-slate-200/50 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3.5">
@@ -532,7 +904,7 @@ export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }
               </span>
             </div>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold">
-              &theta; = {theta} · Model OU Analitik
+              &theta; = {theta} ({regimeInfo.labelShort}) · Model OU Analitik
             </span>
           </div>
 
@@ -624,7 +996,8 @@ export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }
             Prediksi probabilistik dihitung menggunakan distribusi Normal kondisional dari proses Ornstein-Uhlenbeck (OU).
             E[T<sub>t+1</sub>] = &mu; + (T<sub>t</sub> - &mu;)·e<sup>-&theta;</sup> ;&nbsp;
             &sigma;<sub>pred</sub> = &sigma;·&radic;((1 - e<sup>-2&theta;</sup>) / 2&theta;).
-            Asumsi: &theta; = {theta}, sumber T<sub>t</sub> = {isRealObs ? "suhu maks riil METAR" : "prakiraan ECMWF"}.
+            Asumsi: &theta; = {theta} (regime {regimeInfo.labelShort}), sumber T<sub>t</sub> = {isRealObs ? "suhu maks riil METAR" : "prakiraan ECMWF"}.{" "}
+            {confidenceDecay && <span>Confidence score: <strong>{confidenceDecay.score}/100</strong> ({confidenceDecay.tierLabel}).</span>}
           </p>
         </div>
       )}

@@ -187,3 +187,39 @@ export async function getWeatherHistory2026(): Promise<WeatherComparisonRow[]> {
     return [];
   }
 }
+
+// ── OU Predictions (Backtesting) ─────────────────────────────────────────
+
+export interface OUPredictionSupabaseRow {
+  date: string;
+  target_date: string;
+  predicted_p50: number;
+  predicted_p10: number | null;
+  predicted_p90: number | null;
+  ou_mean: number | null;
+  theta: number | null;
+  regime: string | null;
+  source_temp: number | null;
+  confidence_score: number | null;
+  created_at: string;
+}
+
+export async function getOUPredictions(): Promise<OUPredictionSupabaseRow[]> {
+  try {
+    const { data, error } = await supabase
+      .from("ou_predictions")
+      .select("*")
+      .order("date", { ascending: true });
+
+    if (error) {
+      // Table doesn't exist yet — return empty silently
+      if (error.code === "42P01" || error.code === "PGRST205") return [];
+      throw error;
+    }
+
+    return data ?? [];
+  } catch (e) {
+    console.error("Failed to fetch OU predictions from Supabase:", e);
+    return [];
+  }
+}
