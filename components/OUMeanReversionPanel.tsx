@@ -74,9 +74,10 @@ const Z_SCORES: Record<string, number> = {
   p95:  1.6449,
 };
 
-// ── Regime Detection (imported from shared lib — server-safe) ────────────────
-export type { MonsoonRegime, RegimeInfo } from "@/lib/ouRegime";
-export { detectRegime } from "@/lib/ouRegime";
+// ── Regime Detection (imported from shared lib) ───────────────────────────────
+// NOTE: Do NOT re-export detectRegime from here — this is a "use client" file.
+// Re-exporting from a "use client" module taints functions as client references.
+// Server components should import directly from "@/lib/ouRegime".
 import { detectRegime, type RegimeInfo } from "@/lib/ouRegime";
 
 // ── Confidence Decay Indicator ────────────────────────────────────────────────
