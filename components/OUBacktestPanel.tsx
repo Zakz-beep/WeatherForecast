@@ -45,9 +45,16 @@ interface OUBacktestPanelProps {
 
 // ── Custom Tooltip ─────────────────────────────────────────────────────────────
 
-function ErrorBarTooltip({ active, payload, label }: any) {
+interface ErrorBarTooltipProps {
+  active?: boolean;
+  payload?: Array<{
+    payload: BacktestRow;
+  }>;
+}
+
+function ErrorBarTooltip({ active, payload }: ErrorBarTooltipProps) {
   if (!active || !payload?.length) return null;
-  const row: BacktestRow = payload[0]?.payload;
+  const row = payload[0]?.payload;
   if (!row) return null;
 
   return (
@@ -96,9 +103,17 @@ function ErrorBarTooltip({ active, payload, label }: any) {
   );
 }
 
-function RollingTooltip({ active, payload }: any) {
+interface RollingTooltipProps {
+  active?: boolean;
+  payload?: Array<{
+    payload: RollingWindowEntry;
+  }>;
+}
+
+function RollingTooltip({ active, payload }: RollingTooltipProps) {
   if (!active || !payload?.length) return null;
-  const d = payload[0]?.payload as RollingWindowEntry;
+  const d = payload[0]?.payload;
+  if (!d) return null;
 
   return (
     <div className="bg-slate-900 text-white p-3 rounded-xl border border-slate-700 text-[11px] space-y-1.5">

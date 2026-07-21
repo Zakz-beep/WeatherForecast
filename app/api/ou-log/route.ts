@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -19,7 +19,7 @@ function getSupabase() {
 // We use a raw SQL RPC call via Supabase's REST API (pg_query workaround).
 // If the anon role doesn't have DDL perms, this is a no-op and the POST will
 // fail gracefully without crashing the page.
-async function ensureTable(supabase: any) {
+async function ensureTable(supabase: SupabaseClient) {
   const sql = `
     CREATE TABLE IF NOT EXISTS ou_predictions (
       date             DATE PRIMARY KEY,

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import initWasm, { normal_cdf, ou_forecast as wasmOuForecast } from "../public/wasm/wasm_predict.js";
 import {
   ComposedChart,
   Area,
@@ -32,36 +33,6 @@ import {
   Clock,
 } from "lucide-react";
 
-// ── Pure Math Helpers ──────────────────────────────────────────────────────────
-
-/** Abramowitz & Stegun approximation for the Normal CDF, error < 7.5e-8 */
-function normalCDF(x: number): number {
-  const t = 1 / (1 + 0.2316419 * Math.abs(x));
-  const d = 0.3989422820 * Math.exp(-0.5 * x * x);
-  const poly =
-    t * (0.3193815302 +
-      t * (-0.3565637813 +
-        t * (1.7814779372 +
-          t * (-1.8212559978 + t * 1.3302744929))));
-  const cdf = 1 - d * poly;
-  return x >= 0 ? cdf : 1 - cdf;
-}
-
-/** Compute OU conditional mean & std for H+1 given current temp */
-function ouForecast(
-  current: number,
-  mu: number,
-  sigma: number,
-  theta: number
-) {
-  const dt = 1; // 1 day
-  const expNeg  = Math.exp(-theta * dt);
-  const exp2Neg = Math.exp(-2 * theta * dt);
-  const mean = mu + (current - mu) * expNeg;
-  const variance = (sigma * sigma * (1 - exp2Neg)) / (2 * theta);
-  const std = Math.sqrt(variance);
-  return { mean, std };
-}
 
 /** Normal quantile z for common percentiles */
 const Z_SCORES: Record<string, number> = {
@@ -78,7 +49,7 @@ const Z_SCORES: Record<string, number> = {
 // NOTE: Do NOT re-export detectRegime from here — this is a "use client" file.
 // Re-exporting from a "use client" module taints functions as client references.
 // Server components should import directly from "@/lib/ouRegime".
-import { detectRegime, type RegimeInfo } from "@/lib/ouRegime";
+import { detectRegime } from "@/lib/ouRegime";
 
 // ── Confidence Decay Indicator ────────────────────────────────────────────────
 
@@ -109,7 +80,7 @@ export function computeConfidenceDecay(
   estimate: TempEstimate,
   expectedObs: number = 48  // WSSS typically reports every 30 min → 48/day
 ): ConfidenceDecay {
-  const { currentHourSGT, isPeakReached, source, confidence, dataQuality } = estimate;
+  const { currentHourSGT, isPeakReached, source, dataQuality } = estimate;
 
   // Component A: Time maturity (0–40 pts)
   // Pre-peak hours (before 14:00 SGT) decay linearly; post-peak is full score.
@@ -184,6 +155,20 @@ interface OUMeanReversionPanelProps {
 
 
 export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }: OUMeanReversionPanelProps) {
+  // ── Rust WASM Engine States ────────────────────────────────────────────────
+  const [wasmReady, setWasmReady] = useState(false);
+
+  useEffect(() => {
+    initWasm({ module_or_path: "/wasm/wasm_predict_bg.wasm" })
+      .then(() => {
+        setWasmReady(true);
+        console.log("Rust WASM Engine initialized successfully.");
+      })
+      .catch((e) => {
+        console.error("Failed to load Rust WASM Engine:", e);
+      });
+  }, []);
+
   // ── Regime Detection (computed once on mount) ─────────────────────────────
   const currentMonthIdxForRegime = useMemo(() => new Date().getMonth(), []);
   const regimeInfo = useMemo(() => detectRegime(currentMonthIdxForRegime), [currentMonthIdxForRegime]);
@@ -234,13 +219,10 @@ export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }
   // Use dynamic theta from Regime Detection instead of hardcoded 0.25
   const theta = regimeInfo.dynamicTheta;
   const probabilisticForecast = useMemo(() => {
-    if (referenceTemp == null) return null;
-    const { mean, std } = ouForecast(
-      referenceTemp,
-      activeMonthData.mean,
-      activeMonthData.sigma,
-      theta
-    );
+    if (referenceTemp == null || !wasmReady) return null;
+    
+    const res = wasmOuForecast(referenceTemp, activeMonthData.mean, activeMonthData.sigma, theta) as { mean: number; std: number };
+    const { mean, std } = res;
 
     // Percentile temperatures
     const percentiles = Object.fromEntries(
@@ -248,14 +230,19 @@ export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }
     );
 
     // Probability of exceeding key thresholds
-    const thresholds = [30, 31, 32, 33, 34].map((t) => ({
-      temp: t,
-      probAbove: (1 - normalCDF((t - mean) / std)) * 100,
-      probBelow: normalCDF((t - mean) / std) * 100,
-    }));
+    const thresholds = [30, 31, 32, 33, 34].map((t) => {
+      const probAbove = (1.0 - normal_cdf((t - mean) / std)) * 100.0;
+      const probBelow = normal_cdf((t - mean) / std) * 100.0;
+      
+      return {
+        temp: t,
+        probAbove,
+        probBelow,
+      };
+    });
 
     return { mean, std, percentiles, thresholds };
-  }, [referenceTemp, activeMonthData]);
+  }, [referenceTemp, activeMonthData, theta, wasmReady]);
 
   // Persiapkan data untuk chart Recharts
   const chartData = useMemo(() => {
@@ -320,6 +307,28 @@ export default function OUMeanReversionPanel({ tempEstimate, todayForecastTemp }
           </p>
         </div>
       )}
+
+      {/* Rust WASM Engine Status Banner */}
+      <div className="bg-slate-50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800 rounded-3xl p-4 sm:p-5 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2.5">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${wasmReady ? "bg-emerald-400" : "bg-amber-400"}`}></span>
+            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${wasmReady ? "bg-emerald-500" : "bg-amber-500"}`}></span>
+          </span>
+          <div>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block sm:inline mr-1">
+              Kalkulator Engine:
+            </span>
+            <span className={`text-xs font-extrabold ${wasmReady ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+              {wasmReady ? "RUST WEBASSEMBLY (ACTIVE)" : "INITIALIZING WASM CORE..."}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 text-[10px] sm:text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-100/50 dark:border-indigo-900/30">
+          <Zap size={11} className={wasmReady ? "animate-pulse" : ""} />
+          <span>WASM Exclusive Mode</span>
+        </div>
+      </div>
 
       {/* Main Grid: Visualisasi + Detail Panel */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

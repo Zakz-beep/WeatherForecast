@@ -1,0 +1,15 @@
+{
+  "name": "wasm-predict",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "wasm_predict_bg.wasm",
+    "wasm_predict.js",
+    "wasm_predict.d.ts"
+  ],
+  "main": "wasm_predict.js",
+  "types": "wasm_predict.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
