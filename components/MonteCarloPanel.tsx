@@ -147,8 +147,8 @@ export default function MonteCarloPanel({
   const [wasmReady, setWasmReady] = useState(false);
   const startTimeRef = useRef<number>(0);
 
-  const activeMonth = OU_MONTHS[currentMonthIdx];
-  const regime = detectRegime(currentMonthIdx);
+  const activeMonth = React.useMemo(() => OU_MONTHS[currentMonthIdx], [currentMonthIdx]);
+  const regime = React.useMemo(() => detectRegime(currentMonthIdx), [currentMonthIdx]);
 
   // Initialize WASM once on mount
   useEffect(() => {
@@ -181,7 +181,8 @@ export default function MonteCarloPanel({
     } finally {
       setIsLoading(false);
     }
-  }, [currentTemp, tomorrowForecast, activeMonth, regime, ecmwfWeight, nSims, wasmReady]);
+  }, [currentTemp, tomorrowForecast, activeMonth.mean, activeMonth.sigma, regime.dynamicTheta, ecmwfWeight, nSims, wasmReady]);
+
 
   // Auto-run when WASM becomes ready or inputs change
   useEffect(() => {
