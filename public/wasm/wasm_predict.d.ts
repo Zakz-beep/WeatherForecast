@@ -1,20 +1,23 @@
 /* tslint:disable */
 /* eslint-disable */
 
-/**
- * Abramowitz & Stegun approximation for the Normal CDF, error < 7.5e-8
- */
+export function bias_stats(actuals: Float64Array, forecasts: Float64Array): any;
+
+export function compute_rolling_bias(actuals: Float64Array, forecasts: Float64Array, limit: number): any;
+
+export function linear_regression(forecasts: Float64Array, actuals: Float64Array): any;
+
 export function normal_cdf(x: number): number;
 
-/**
- * Compute OU conditional mean & std for H+1 given current temp
- */
 export function ou_forecast(current: number, mu: number, sigma: number, theta: number): any;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly bias_stats: (a: number, b: number, c: number, d: number) => any;
+    readonly compute_rolling_bias: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly linear_regression: (a: number, b: number, c: number, d: number) => any;
     readonly normal_cdf: (a: number) => number;
     readonly ou_forecast: (a: number, b: number, c: number, d: number) => any;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

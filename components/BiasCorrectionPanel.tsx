@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   ScatterChart,
   Scatter,
@@ -23,39 +23,18 @@ import {
   BarChart2,
   RefreshCcw,
   Info,
+  Zap,
 } from "lucide-react";
+import initWasm, {
+  linear_regression,
+  bias_stats,
+  compute_rolling_bias,
+} from "@/public/wasm/wasm_predict";
 
 interface BiasCorrectionPanelProps {
   data: WeatherComparisonRow[];
   todayForecastTemp: number | null;
   todayForecastWind: number | null;
-}
-
-// ─── Pure Statistics Helpers ────────────────────────────────────────────────
-
-function calcLinearRegression(xs: number[], ys: number[]) {
-  const n = xs.length;
-  if (n < 2) return { a: 0, b: 1, r2: 0 };
-  const xMean = xs.reduce((s, v) => s + v, 0) / n;
-  const yMean = ys.reduce((s, v) => s + v, 0) / n;
-  const ssxy = xs.reduce((s, x, i) => s + (x - xMean) * (ys[i] - yMean), 0);
-  const ssxx = xs.reduce((s, x) => s + (x - xMean) ** 2, 0);
-  const b = ssxx === 0 ? 1 : ssxy / ssxx;
-  const a = yMean - b * xMean;
-  const ssTot = ys.reduce((s, y) => s + (y - yMean) ** 2, 0);
-  const ssRes = xs.reduce((s, x, i) => s + (ys[i] - (a + b * x)) ** 2, 0);
-  const r2 = ssTot === 0 ? 1 : 1 - ssRes / ssTot;
-  return { a, b, r2 };
-}
-
-function calcBiasStats(actuals: number[], forecasts: number[]) {
-  const n = actuals.length;
-  if (n === 0) return { mbe: 0, mae: 0, rmse: 0, n: 0 };
-  const errors = actuals.map((a, i) => a - forecasts[i]);
-  const mbe = errors.reduce((s, e) => s + e, 0) / n;
-  const mae = errors.reduce((s, e) => s + Math.abs(e), 0) / n;
-  const rmse = Math.sqrt(errors.reduce((s, e) => s + e ** 2, 0) / n);
-  return { mbe, mae, rmse, n };
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -116,6 +95,18 @@ export default function BiasCorrectionPanel({
   todayForecastWind,
 }: BiasCorrectionPanelProps) {
   const [metric, setMetric] = useState<"temp" | "wind">("temp");
+  const [wasmReady, setWasmReady] = useState(false);
+
+  useEffect(() => {
+    initWasm({ module_or_path: "/wasm/wasm_predict_bg.wasm" })
+      .then(() => {
+        setWasmReady(true);
+        console.log("Bias Correction WASM Engine initialized successfully.");
+      })
+      .catch((e) => {
+        console.error("Failed to load Bias Correction WASM Engine:", e);
+      });
+  }, []);
 
   const validRows = useMemo(() => {
     return data.filter((r) => {
@@ -143,16 +134,20 @@ export default function BiasCorrectionPanel({
   );
 
   // ── 1. Global Bias Stats
-  const globalStats = useMemo(
-    () => calcBiasStats(actuals, forecasts),
-    [actuals, forecasts]
-  );
+  const globalStats = useMemo(() => {
+    if (!wasmReady || actuals.length === 0) {
+      return { mbe: 0, mae: 0, rmse: 0, n: 0 };
+    }
+    return bias_stats(new Float64Array(actuals), new Float64Array(forecasts)) as { mbe: number; mae: number; rmse: number; n: number };
+  }, [actuals, forecasts, wasmReady]);
 
   // ── 2. Linear Regression MOS
-  const mos = useMemo(
-    () => calcLinearRegression(forecasts, actuals),
-    [forecasts, actuals]
-  );
+  const mos = useMemo(() => {
+    if (!wasmReady || forecasts.length === 0) {
+      return { a: 0, b: 1, r2: 0 };
+    }
+    return linear_regression(new Float64Array(forecasts), new Float64Array(actuals)) as { a: number; b: number; r2: number };
+  }, [forecasts, actuals, wasmReady]);
 
   const scatterData = useMemo(
     () =>
@@ -178,59 +173,67 @@ export default function BiasCorrectionPanel({
 
   // ── 3. Rolling Bias
   const rolling7 = useMemo(() => {
+    if (!wasmReady || validRows.length === 0) {
+      return { mbe: 0, mae: 0, rmse: 0, n: 0 };
+    }
     const recent = validRows.slice(-7);
-    return calcBiasStats(
-      recent.map((r) =>
-        metric === "temp" ? r.actual_temp_max : (r.actual_wind_max as number)
-      ),
-      recent.map((r) =>
-        metric === "temp"
-          ? r.forecast_temp_max
-          : (r.forecast_wind_max as number)
-      )
+    const recentActuals = recent.map((r) =>
+      metric === "temp" ? r.actual_temp_max : (r.actual_wind_max as number)
     );
-  }, [validRows, metric]);
+    const recentForecasts = recent.map((r) =>
+      metric === "temp"
+        ? r.forecast_temp_max
+        : (r.forecast_wind_max as number)
+    );
+    return bias_stats(new Float64Array(recentActuals), new Float64Array(recentForecasts)) as { mbe: number; mae: number; rmse: number; n: number };
+  }, [validRows, metric, wasmReady]);
 
   const rolling30 = useMemo(() => {
+    if (!wasmReady || validRows.length === 0) {
+      return { mbe: 0, mae: 0, rmse: 0, n: 0 };
+    }
     const recent = validRows.slice(-30);
-    return calcBiasStats(
-      recent.map((r) =>
-        metric === "temp" ? r.actual_temp_max : (r.actual_wind_max as number)
-      ),
-      recent.map((r) =>
-        metric === "temp"
-          ? r.forecast_temp_max
-          : (r.forecast_wind_max as number)
-      )
+    const recentActuals = recent.map((r) =>
+      metric === "temp" ? r.actual_temp_max : (r.actual_wind_max as number)
     );
-  }, [validRows, metric]);
+    const recentForecasts = recent.map((r) =>
+      metric === "temp"
+        ? r.forecast_temp_max
+        : (r.forecast_wind_max as number)
+    );
+    return bias_stats(new Float64Array(recentActuals), new Float64Array(recentForecasts)) as { mbe: number; mae: number; rmse: number; n: number };
+  }, [validRows, metric, wasmReady]);
 
   const rollingBiasChart = useMemo(() => {
-    return validRows.slice(-60).map((row, i, arr) => {
+    if (!wasmReady || validRows.length === 0) {
+      return [];
+    }
+    const fullActuals = validRows.map((r) =>
+      metric === "temp" ? r.actual_temp_max : (r.actual_wind_max as number)
+    );
+    const fullForecasts = validRows.map((r) =>
+      metric === "temp"
+        ? r.forecast_temp_max
+        : (r.forecast_wind_max as number)
+    );
+    
+    const limit = Math.min(validRows.length, 60);
+    const entries = compute_rolling_bias(new Float64Array(fullActuals), new Float64Array(fullForecasts), limit) as Array<{ bias_7h: number; bias_30h: number }>;
+    
+    const recentRows = validRows.slice(-limit);
+    return recentRows.map((row, i) => {
       const date = new Date(row.date).toLocaleDateString("id-ID", {
         day: "numeric",
         month: "short",
       });
-      const getActual = (r: WeatherComparisonRow) =>
-        metric === "temp" ? r.actual_temp_max : (r.actual_wind_max as number);
-      const getForecast = (r: WeatherComparisonRow) =>
-        metric === "temp"
-          ? r.forecast_temp_max
-          : (r.forecast_wind_max as number);
-
-      const w7 = arr.slice(Math.max(0, i - 6), i + 1);
-      const w30 = arr.slice(Math.max(0, i - 29), i + 1);
-
-      const bias7 = calcBiasStats(w7.map(getActual), w7.map(getForecast)).mbe;
-      const bias30 = calcBiasStats(w30.map(getActual), w30.map(getForecast)).mbe;
-
+      const entry = entries[i] || { bias_7h: 0, bias_30h: 0 };
       return {
         date,
-        "Bias 7H": parseFloat(bias7.toFixed(2)),
-        "Bias 30H": parseFloat(bias30.toFixed(2)),
+        "Bias 7H": parseFloat(entry.bias_7h.toFixed(2)),
+        "Bias 30H": parseFloat(entry.bias_30h.toFixed(2)),
       };
     });
-  }, [validRows, metric]);
+  }, [validRows, metric, wasmReady]);
 
   const todayForecast = metric === "temp" ? todayForecastTemp : todayForecastWind;
   const unit = metric === "temp" ? "°C" : " km/j";
@@ -247,6 +250,15 @@ export default function BiasCorrectionPanel({
     todayForecast != null
       ? parseFloat((todayForecast + rolling7.mbe).toFixed(1))
       : null;
+
+  if (!wasmReady) {
+    return (
+      <div className="bg-slate-900 rounded-3xl p-6 border border-slate-800 text-slate-400 text-sm text-center flex flex-col items-center justify-center min-h-[300px] gap-3">
+        <div className="w-8 h-8 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin" />
+        <span className="font-semibold text-slate-300">Menghubungkan Mesin Statistik WASM...</span>
+      </div>
+    );
+  }
 
   if (validRows.length < 5) {
     return (
@@ -267,8 +279,12 @@ export default function BiasCorrectionPanel({
             <Activity size={20} />
           </div>
           <div>
-            <h3 className="font-bold text-sm sm:text-base text-white">
+            <h3 className="font-bold text-sm sm:text-base text-white flex items-center gap-1.5">
               Koreksi Bias Statistik Model
+              <span className="text-[9px] font-extrabold font-mono text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-full bg-purple-500/5 flex items-center gap-0.5">
+                <Zap size={9} className="animate-pulse" />
+                RUST WASM
+              </span>
             </h3>
             <p className="text-xs text-slate-400">
               MBE · Linear Regression MOS · Rolling Bias — WSSS Singapore
