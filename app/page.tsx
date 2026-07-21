@@ -11,6 +11,7 @@ import History2026Chart from "@/components/History2026Chart";
 import BiasCorrectionPanel from "@/components/BiasCorrectionPanel";
 import OUMeanReversionPanel from "@/components/OUMeanReversionPanel";
 import OUBacktestPanel from "@/components/OUBacktestPanel";
+import MonteCarloPanel from "@/components/MonteCarloPanel";
 import {
   joinPredictionsWithActuals,
   computeBacktestMetrics,
@@ -345,6 +346,17 @@ export default async function Home(props: { searchParams: SearchParams }) {
                 <OUMeanReversionPanel
                   tempEstimate={tempEstimate}
                   todayForecastTemp={weatherData?.daily?.temperature_2m_max?.[0] ?? null}
+                />
+              </div>
+            )}
+
+            {/* Monte Carlo Probabilistic Max Temperature Simulator */}
+            {isSingapore && (
+              <div className="md:col-span-12">
+                <MonteCarloPanel
+                  currentTemp={tempEstimate?.correctedPeak ?? weatherData?.daily?.temperature_2m_max?.[0] ?? null}
+                  tomorrowForecast={weatherData?.daily?.temperature_2m_max?.[1] ?? null}
+                  currentMonthIdx={new Date().getMonth()}
                 />
               </div>
             )}

@@ -44,6 +44,33 @@ export function linear_regression(forecasts, actuals) {
 }
 
 /**
+ * Monte Carlo simulation for tomorrow's maximum temperature.
+ *
+ * # Parameters
+ * - `current_temp`: Today's current/peak temperature (°C), from METAR or ECMWF.
+ * - `ecmwf_tomorrow`: Open-Meteo T_max forecast for tomorrow (°C).
+ * - `mu`: OU gravitational anchor (monthly climatological mean, °C).
+ * - `sigma`: OU monthly volatility (°C).
+ * - `theta`: Mean-reversion speed (regime-adapted, e.g. 0.15–0.40).
+ * - `ecmwf_weight`: Weight of Open-Meteo forecast in the blended start (0.0–1.0).
+ * - `n_sims`: Number of Monte Carlo paths (recommended: 10000).
+ * - `seed`: PRNG seed (use 0 for default; use timestamp for variety).
+ * @param {number} current_temp
+ * @param {number} ecmwf_tomorrow
+ * @param {number} mu
+ * @param {number} sigma
+ * @param {number} theta
+ * @param {number} ecmwf_weight
+ * @param {number} n_sims
+ * @param {bigint} seed
+ * @returns {any}
+ */
+export function monte_carlo_max_temp(current_temp, ecmwf_tomorrow, mu, sigma, theta, ecmwf_weight, n_sims, seed) {
+    const ret = wasm.monte_carlo_max_temp(current_temp, ecmwf_tomorrow, mu, sigma, theta, ecmwf_weight, n_sims, seed);
+    return ret;
+}
+
+/**
  * @param {number} x
  * @returns {number}
  */

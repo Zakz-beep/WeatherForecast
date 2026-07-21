@@ -7,6 +7,21 @@ export function compute_rolling_bias(actuals: Float64Array, forecasts: Float64Ar
 
 export function linear_regression(forecasts: Float64Array, actuals: Float64Array): any;
 
+/**
+ * Monte Carlo simulation for tomorrow's maximum temperature.
+ *
+ * # Parameters
+ * - `current_temp`: Today's current/peak temperature (°C), from METAR or ECMWF.
+ * - `ecmwf_tomorrow`: Open-Meteo T_max forecast for tomorrow (°C).
+ * - `mu`: OU gravitational anchor (monthly climatological mean, °C).
+ * - `sigma`: OU monthly volatility (°C).
+ * - `theta`: Mean-reversion speed (regime-adapted, e.g. 0.15–0.40).
+ * - `ecmwf_weight`: Weight of Open-Meteo forecast in the blended start (0.0–1.0).
+ * - `n_sims`: Number of Monte Carlo paths (recommended: 10000).
+ * - `seed`: PRNG seed (use 0 for default; use timestamp for variety).
+ */
+export function monte_carlo_max_temp(current_temp: number, ecmwf_tomorrow: number, mu: number, sigma: number, theta: number, ecmwf_weight: number, n_sims: number, seed: bigint): any;
+
 export function normal_cdf(x: number): number;
 
 export function ou_forecast(current: number, mu: number, sigma: number, theta: number): any;
@@ -18,6 +33,7 @@ export interface InitOutput {
     readonly bias_stats: (a: number, b: number, c: number, d: number) => any;
     readonly compute_rolling_bias: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly linear_regression: (a: number, b: number, c: number, d: number) => any;
+    readonly monte_carlo_max_temp: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: bigint) => any;
     readonly normal_cdf: (a: number) => number;
     readonly ou_forecast: (a: number, b: number, c: number, d: number) => any;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
