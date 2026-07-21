@@ -11,7 +11,6 @@ import {
   Tooltip,
   ReferenceLine,
   ResponsiveContainer,
-  Legend,
 } from "recharts";
 import { OU_MONTHS } from "@/lib/ouParams";
 import { detectRegime } from "@/lib/ouRegime";
@@ -26,7 +25,6 @@ import {
   TrendingUp,
   AlertTriangle,
 } from "lucide-react";
-
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,12 +49,6 @@ interface MonteCarloResult {
 
 interface MonteCarloFanPoint {
   label: string;
-  /** For "today" marker this is the current temp, for "tomorrow" it's the midpoint/median */
-  p50: number;
-  p5_p95: [number, number];
-  p10_p90: [number, number];
-  p25_p75: [number, number];
-  /** For charting: absolute values for stacked areas */
   base: number;
   band5_10_lo: number;
   band10_25_lo: number;
@@ -74,7 +66,7 @@ interface Props {
 // ─── Threshold config ─────────────────────────────────────────────────────────
 const THRESHOLDS = [30, 31, 32, 33, 34] as const;
 
-// ─── Probability Badge Color ──────────────────────────────────────────────────
+// ─── Probability helpers ──────────────────────────────────────────────────────
 function probColor(p: number): string {
   if (p >= 75) return "text-rose-600 dark:text-rose-400";
   if (p >= 50) return "text-amber-600 dark:text-amber-400";
@@ -89,19 +81,29 @@ function probBg(p: number): string {
   return "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60";
 }
 
-// ─── Custom Tooltip ───────────────────────────────────────────────────────────
-interface TooltipProps {
+// ─── Custom Tooltip (pure function, NOT passed as JSX element to Recharts) ────
+interface TooltipPayloadEntry {
+  name: string;
+  value: number;
+  fill: string;
+}
+
+interface FanChartTooltipProps {
   active?: boolean;
-  payload?: Array<{ name: string; value: number; fill: string }>;
+  payload?: TooltipPayloadEntry[];
   label?: string;
 }
 
-function FanChartTooltip({ active, payload, label }: TooltipProps) {
-  if (!active || !payload || !payload.length) return null;
-  // Find named bands from the payload to reconstruct real values
-  // Payload layers stacked from bottom: base (hidden), band5_10_lo, band10_25_lo, band25_75, band10_25_hi, band5_10_hi
-  // We stored real p-values in the data; just label them
+function renderFanChartTooltip({ active, payload, label }: FanChartTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
   const isToday = label === "Hari ini";
+  const bandNames: Record<string, string> = {
+    band5_10_lo: "P5\u2013P10",
+    band10_25_lo: "P10\u2013P25",
+    band25_75: "P25\u2013P75 (IQR)",
+    band10_25_hi: "P75\u2013P90",
+    band5_10_hi: "P90\u2013P95",
+  };
 
   return (
     <div
@@ -112,23 +114,15 @@ function FanChartTooltip({ active, payload, label }: TooltipProps) {
         {isToday ? "📍 Hari ini" : "🌅 Besok (Distribusi MC)"}
       </p>
       {payload.map((entry, i) => {
-        const names: Record<string, string> = {
-          band5_10_lo: "P5–P10",
-          band10_25_lo: "P10–P25",
-          band25_75: "P25–P75 (IQR)",
-          band10_25_hi: "P75–P90",
-          band5_10_hi: "P90–P95",
-        };
         if (entry.name === "base") return null;
+        const label = bandNames[entry.name] ?? entry.name;
         return (
           <div key={i} className="flex items-center gap-2">
             <span
               className="inline-block w-3 h-3 rounded-sm flex-shrink-0"
               style={{ background: entry.fill }}
             />
-            <span className="text-slate-600 dark:text-slate-400">
-              {names[entry.name] ?? entry.name}
-            </span>
+            <span className="text-slate-600 dark:text-slate-400">{label}</span>
           </div>
         );
       })}
@@ -165,16 +159,12 @@ export default function MonteCarloPanel({
 
   const runSimulation = useCallback(async () => {
     if (currentTemp === null || tomorrowForecast === null || !wasmReady) return;
-
     setIsLoading(true);
     setError(null);
-
     try {
       startTimeRef.current = performance.now();
-
-      const seed = BigInt(Date.now() & 0xFFFFFFFF);
-
-      const res: MonteCarloResult = wasmMonteCarlo(
+      const seed = BigInt(Date.now() & 0xffffffff);
+      const res = wasmMonteCarlo(
         currentTemp,
         tomorrowForecast,
         activeMonth.mean,
@@ -184,9 +174,7 @@ export default function MonteCarloPanel({
         nSims,
         seed
       ) as MonteCarloResult;
-
-      const elapsed = performance.now() - startTimeRef.current;
-      setElapsedMs(Math.round(elapsed));
+      setElapsedMs(Math.round(performance.now() - startTimeRef.current));
       setResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal menjalankan simulasi");
@@ -195,26 +183,19 @@ export default function MonteCarloPanel({
     }
   }, [currentTemp, tomorrowForecast, activeMonth, regime, ecmwfWeight, nSims, wasmReady]);
 
-  // Auto-run when WASM is ready or inputs change
+  // Auto-run when WASM becomes ready or inputs change
   useEffect(() => {
     if (!wasmReady) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     runSimulation();
   }, [runSimulation, wasmReady]);
 
-
-
-  // ── Build Fan Chart data ──────────────────────────────────────────────────
+  // ── Chart data ────────────────────────────────────────────────────────────
   const chartData: MonteCarloFanPoint[] = [];
 
   if (currentTemp !== null && result !== null) {
-    // "Today" — point estimate, no spread
     chartData.push({
       label: "Hari ini",
-      p50: currentTemp,
-      p5_p95: [currentTemp, currentTemp],
-      p10_p90: [currentTemp, currentTemp],
-      p25_p75: [currentTemp, currentTemp],
       base: currentTemp,
       band5_10_lo: 0,
       band10_25_lo: 0,
@@ -222,25 +203,18 @@ export default function MonteCarloPanel({
       band10_25_hi: 0,
       band5_10_hi: 0,
     });
-
-    // "Tomorrow" — full distribution
-    const { p5, p10, p25, p50, p75, p90, p95 } = result;
+    const { p5, p10, p25, p75, p90, p95 } = result;
     chartData.push({
       label: "Besok",
-      p50,
-      p5_p95: [p5, p95],
-      p10_p90: [p10, p90],
-      p25_p75: [p25, p75],
       base: p5,
       band5_10_lo: p10 - p5,
       band10_25_lo: p25 - p10,
-      band25_75: p75 - p25,
+      band25_75: result.p75 - p25,
       band10_25_hi: p90 - p75,
       band5_10_hi: p95 - p90,
     });
   }
 
-  // ── Derived display values ────────────────────────────────────────────────
   const thresholdProbs: Record<number, number> = {
     30: result?.prob_above_30 ?? 0,
     31: result?.prob_above_31 ?? 0,
@@ -250,8 +224,6 @@ export default function MonteCarloPanel({
   };
 
   const hasMissingInputs = currentTemp === null || tomorrowForecast === null;
-
-  // ── Y-axis domain ─────────────────────────────────────────────────────────
   const yMin = result ? Math.floor(result.p5 - 0.5) : 28;
   const yMax = result ? Math.ceil(result.p95 + 0.5) : 36;
 
@@ -276,8 +248,6 @@ export default function MonteCarloPanel({
               menggunakan proses Ornstein-Uhlenbeck + koreksi Open-Meteo.
             </p>
           </div>
-
-          {/* Engine Badge */}
           <div className="flex items-center gap-2">
             {isLoading ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 text-xs font-semibold border border-violet-200 dark:border-violet-800/60 animate-pulse">
@@ -297,8 +267,6 @@ export default function MonteCarloPanel({
             )}
           </div>
         </div>
-
-        {/* Parameter badges */}
         <div className="flex flex-wrap gap-2 mt-3">
           <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-mono">
             μ = {activeMonth.mean}°C ({activeMonth.month})
@@ -315,29 +283,22 @@ export default function MonteCarloPanel({
         </div>
       </div>
 
-      {/* ── Missing inputs warning ── */}
+      {/* ── Alerts ── */}
       {hasMissingInputs && (
         <div className="mx-6 mt-5 flex items-start gap-3 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60">
-          <AlertTriangle
-            size={18}
-            className="text-amber-500 flex-shrink-0 mt-0.5"
-          />
+          <AlertTriangle size={18} className="text-amber-500 flex-shrink-0 mt-0.5" />
           <div>
             <p className="font-semibold text-amber-700 dark:text-amber-400 text-sm">
               Data Input Tidak Lengkap
             </p>
             <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5">
               {currentTemp === null && "Suhu hari ini tidak tersedia. "}
-              {tomorrowForecast === null &&
-                "Prakiraan Open-Meteo besok tidak tersedia. "}
-              Panel ini memerlukan kedua nilai tersebut untuk menjalankan
-              simulasi.
+              {tomorrowForecast === null && "Prakiraan Open-Meteo besok tidak tersedia. "}
+              Panel ini memerlukan kedua nilai tersebut untuk menjalankan simulasi.
             </p>
           </div>
         </div>
       )}
-
-      {/* ── Error ── */}
       {error && (
         <div className="mx-6 mt-5 flex items-start gap-3 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/60">
           <AlertTriangle size={18} className="text-rose-500 flex-shrink-0" />
@@ -348,9 +309,8 @@ export default function MonteCarloPanel({
       )}
 
       <div className="px-6 py-5 space-y-6">
-        {/* ── Input Sources ── */}
+        {/* ── Input Source Cards ── */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* Input 1: Current Temp */}
           <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/50 p-4">
             <div className="flex items-center gap-2 mb-1">
               <Thermometer size={14} className="text-orange-500" />
@@ -366,7 +326,6 @@ export default function MonteCarloPanel({
             </p>
           </div>
 
-          {/* Input 2: Open-Meteo Tomorrow */}
           <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/50 p-4">
             <div className="flex items-center gap-2 mb-1">
               <TrendingUp size={14} className="text-sky-500" />
@@ -375,16 +334,13 @@ export default function MonteCarloPanel({
               </span>
             </div>
             <p className="text-2xl font-bold text-slate-800 dark:text-slate-100">
-              {tomorrowForecast !== null
-                ? `${tomorrowForecast.toFixed(1)}°C`
-                : "–"}
+              {tomorrowForecast !== null ? `${tomorrowForecast.toFixed(1)}°C` : "–"}
             </p>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
               T_max prakiraan NWP global
             </p>
           </div>
 
-          {/* Output: Blended start */}
           <div className="rounded-2xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800/60 p-4">
             <div className="flex items-center gap-2 mb-1">
               <Shuffle size={14} className="text-violet-500" />
@@ -432,56 +388,36 @@ export default function MonteCarloPanel({
                       <stop offset="95%" stopColor="#6d28d9" stopOpacity={0.4} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#94a3b8"
-                    opacity={0.12}
-                  />
+
+                  <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.12} />
                   <XAxis
                     dataKey="label"
-                    tick={{
-                      fontSize: 12,
-                      fill: "currentColor",
-                      className: "text-slate-500",
-                    }}
+                    tick={{ fontSize: 12, fill: "currentColor" }}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
                     domain={[yMin, yMax]}
                     tickFormatter={(v: number) => `${v}°`}
-                    tick={{
-                      fontSize: 11,
-                      fill: "currentColor",
-                      className: "text-slate-400",
-                    }}
+                    tick={{ fontSize: 11, fill: "currentColor" }}
                     axisLine={false}
                     tickLine={false}
                     width={34}
                   />
-                  <Tooltip content={<FanChartTooltip />} />
-                  <Legend
-                    formatter={(value: string) => {
-                      const map: Record<string, string> = {
-                        base: "",
-                        band5_10_lo: "P5–P10 / P90–P95",
-                        band10_25_lo: "P10–P25 / P75–P90",
-                        band25_75: "P25–P75 (IQR)",
-                        band10_25_hi: "",
-                        band5_10_hi: "",
-                      };
-                      return (
-                        <span className="text-xs text-slate-500 dark:text-slate-400">
-                          {map[value] ?? value}
-                        </span>
-                      );
-                    }}
-                    iconType="square"
-                    iconSize={10}
-                    wrapperStyle={{ paddingTop: 8 }}
+
+                  {/* Tooltip uses render-prop to avoid React #185 hook check */}
+                  <Tooltip
+                    content={(props) =>
+                      renderFanChartTooltip({
+                        active: props.active,
+                        payload: props.payload as unknown as TooltipPayloadEntry[] | undefined,
+                        label: props.label as string | undefined,
+                      })
+
+                    }
                   />
 
-                  {/* Base layer (transparent, just sets Y-floor at p5) */}
+                  {/* Stacked fan layers */}
                   <Area
                     type="monotone"
                     dataKey="base"
@@ -491,7 +427,6 @@ export default function MonteCarloPanel({
                     name="base"
                     legendType="none"
                   />
-                  {/* P5–P10 (outer lower tail) */}
                   <Area
                     type="monotone"
                     dataKey="band5_10_lo"
@@ -499,9 +434,8 @@ export default function MonteCarloPanel({
                     stroke="none"
                     fill="url(#mcOuter)"
                     name="band5_10_lo"
-                    legendType="square"
+                    legendType="none"
                   />
-                  {/* P10–P25 (mid lower) */}
                   <Area
                     type="monotone"
                     dataKey="band10_25_lo"
@@ -509,21 +443,18 @@ export default function MonteCarloPanel({
                     stroke="none"
                     fill="url(#mcMid)"
                     name="band10_25_lo"
-                    legendType="square"
+                    legendType="none"
                   />
-                  {/* P25–P75 (IQR core) */}
                   <Area
                     type="monotone"
                     dataKey="band25_75"
                     stackId="fan"
                     stroke="#7c3aed"
                     strokeWidth={1.5}
-                    strokeDasharray="0"
                     fill="url(#mcCore)"
                     name="band25_75"
-                    legendType="square"
+                    legendType="none"
                   />
-                  {/* P75–P90 (mid upper) */}
                   <Area
                     type="monotone"
                     dataKey="band10_25_hi"
@@ -533,7 +464,6 @@ export default function MonteCarloPanel({
                     name="band10_25_hi"
                     legendType="none"
                   />
-                  {/* P90–P95 (outer upper tail) */}
                   <Area
                     type="monotone"
                     dataKey="band5_10_hi"
@@ -544,7 +474,6 @@ export default function MonteCarloPanel({
                     legendType="none"
                   />
 
-                  {/* OU Gravity anchor line */}
                   <ReferenceLine
                     y={activeMonth.mean}
                     stroke="#6366f1"
@@ -557,7 +486,6 @@ export default function MonteCarloPanel({
                       fill: "#6366f1",
                     }}
                   />
-                  {/* P50 median line */}
                   {result && (
                     <ReferenceLine
                       y={result.p50}
@@ -574,6 +502,30 @@ export default function MonteCarloPanel({
                   )}
                 </AreaChart>
               </ResponsiveContainer>
+            </div>
+
+            {/* Manual CSS Legend (replaces Recharts Legend to avoid hook issues) */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-3 rounded-sm" style={{ background: "rgba(109,40,217,0.55)" }} />
+                P25–P75 (IQR)
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-3 rounded-sm" style={{ background: "rgba(124,58,237,0.28)" }} />
+                P10–P25 / P75–P90
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-3 rounded-sm" style={{ background: "rgba(139,92,246,0.12)" }} />
+                P5–P10 / P90–P95
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-5 border-t-2 border-dashed border-indigo-500" />
+                Jangkar μ OU
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-5 border-t-2 border-dashed border-amber-500" />
+                Median P50
+              </span>
             </div>
           </div>
         )}
@@ -595,11 +547,11 @@ export default function MonteCarloPanel({
                   ["P90", result.p90],
                   ["P95", result.p95],
                 ] as [string, number][]
-              ).map(([label, val]) => {
-                const isMedian = label === "P50";
+              ).map(([pLabel, val]) => {
+                const isMedian = pLabel === "P50";
                 return (
                   <div
-                    key={label}
+                    key={pLabel}
                     className={`rounded-xl p-3 text-center transition-all border ${
                       isMedian
                         ? "bg-violet-600 dark:bg-violet-700 border-violet-500 text-white shadow-md shadow-violet-200 dark:shadow-violet-900/40"
@@ -608,16 +560,12 @@ export default function MonteCarloPanel({
                   >
                     <div
                       className={`text-xs font-semibold mb-1 ${
-                        isMedian
-                          ? "text-violet-200"
-                          : "text-slate-400 dark:text-slate-500"
+                        isMedian ? "text-violet-200" : "text-slate-400 dark:text-slate-500"
                       }`}
                     >
-                      {label}
+                      {pLabel}
                     </div>
-                    <div
-                      className={`text-base font-bold ${isMedian ? "text-white" : ""}`}
-                    >
+                    <div className={`text-base font-bold ${isMedian ? "text-white" : ""}`}>
                       {val.toFixed(1)}°
                     </div>
                   </div>
@@ -636,25 +584,23 @@ export default function MonteCarloPanel({
         {result && (
           <div>
             <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-              Peluang Melebihi Threshold Suhu
+              Peluang Melebihi Threshold Suhu Besok
             </h3>
             <div className="space-y-2.5">
               {THRESHOLDS.map((thr) => {
                 const prob = thresholdProbs[thr];
-                const bar = Math.min(prob, 100);
+                const barWidth = Math.min(prob, 100);
                 return (
                   <div
                     key={thr}
-                    className={`rounded-xl border p-3.5 ${probBg(prob)}`}
                     id={`mc-threshold-${thr}`}
+                    className={`rounded-xl border p-3.5 ${probBg(prob)}`}
                   >
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
                         T_max besok &gt; {thr}°C
                       </span>
-                      <span
-                        className={`text-base font-bold tabular-nums ${probColor(prob)}`}
-                      >
+                      <span className={`text-base font-bold tabular-nums ${probColor(prob)}`}>
                         {prob.toFixed(1)}%
                       </span>
                     </div>
@@ -669,7 +615,7 @@ export default function MonteCarloPanel({
                                 ? "bg-sky-500"
                                 : "bg-emerald-500"
                         }`}
-                        style={{ width: `${bar}%` }}
+                        style={{ width: `${barWidth}%` }}
                       />
                     </div>
                   </div>
@@ -679,13 +625,12 @@ export default function MonteCarloPanel({
           </div>
         )}
 
-        {/* ── Controls ── */}
+        {/* ── Parameter Controls ── */}
         <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/50 p-4 space-y-4">
           <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
             Parameter Simulasi
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* ECMWF Weight slider */}
             <div>
               <label
                 htmlFor="mc-ecmwf-weight"
@@ -712,7 +657,6 @@ export default function MonteCarloPanel({
               </div>
             </div>
 
-            {/* N sims select */}
             <div>
               <label
                 htmlFor="mc-n-sims"
@@ -737,7 +681,7 @@ export default function MonteCarloPanel({
           <button
             id="mc-run-button"
             onClick={runSimulation}
-            disabled={isLoading || hasMissingInputs}
+            disabled={isLoading || hasMissingInputs || !wasmReady}
             className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white text-sm font-semibold transition-all duration-200 shadow-md shadow-violet-200 dark:shadow-violet-900/40 hover:shadow-lg active:scale-[0.98]"
           >
             {isLoading ? (
@@ -762,12 +706,8 @@ export default function MonteCarloPanel({
             className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
           >
             <Info size={13} />
-            <span>Metodologi & Asumsi Simulasi</span>
-            {showMethodology ? (
-              <ChevronUp size={13} />
-            ) : (
-              <ChevronDown size={13} />
-            )}
+            <span>Metodologi &amp; Asumsi Simulasi</span>
+            {showMethodology ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
 
           {showMethodology && (
@@ -783,39 +723,27 @@ export default function MonteCarloPanel({
                 dengan langkah waktu hourly (Δt = 1/24 hari) selama 24 jam.
               </p>
               <p>
-                <strong className="text-slate-700 dark:text-slate-300">
-                  Gravitasi Jangkar OU:
-                </strong>{" "}
-                Parameter μ (mean bulanan) dan θ (kecepatan mean-reversion) dari
-                data klimatologi Changi Airport berfungsi sebagai &quot;gaya
-                tarik&quot; yang menstabilkan jalur simulasi agar tidak menyimpang
-                terlalu jauh dari rata-rata historis.
+                <strong className="text-slate-700 dark:text-slate-300">Gravitasi Jangkar OU:</strong>{" "}
+                Parameter μ (mean bulanan) dan θ (kecepatan mean-reversion) dari data klimatologi
+                Changi Airport berfungsi sebagai &quot;gaya tarik&quot; yang menstabilkan jalur
+                simulasi agar tidak menyimpang terlalu jauh dari rata-rata historis.
               </p>
               <p>
-                <strong className="text-slate-700 dark:text-slate-300">
-                  Koreksi Open-Meteo:
-                </strong>{" "}
-                Titik awal simulasi besok adalah rata-rata berbobot antara
-                prakiraan OU mandiri dan prakiraan T_max dari NWP global
-                Open-Meteo. Bobot dapat dikonfigurasi.
+                <strong className="text-slate-700 dark:text-slate-300">Koreksi Open-Meteo:</strong>{" "}
+                Titik awal simulasi besok adalah rata-rata berbobot antara prakiraan OU mandiri dan
+                prakiraan T_max dari NWP global Open-Meteo. Bobot dapat dikonfigurasi.
               </p>
               <p>
-                <strong className="text-slate-700 dark:text-slate-300">
-                  PRNG:
-                </strong>{" "}
-                Menggunakan algoritma XorShift64 + transformasi Box-Muller untuk
-                menghasilkan bilangan acak berdistribusi normal tanpa memerlukan
-                library eksternal. Seluruh kalkulasi berjalan di Rust WASM
-                (≤5ms untuk 10.000 iterasi).
+                <strong className="text-slate-700 dark:text-slate-300">PRNG:</strong>{" "}
+                Menggunakan algoritma XorShift64 + transformasi Box-Muller untuk menghasilkan
+                bilangan acak berdistribusi normal tanpa memerlukan library eksternal. Seluruh
+                kalkulasi berjalan di Rust WASM (&le;5ms untuk 10.000 iterasi).
               </p>
               <p>
-                <strong className="text-slate-700 dark:text-slate-300">
-                  T_max per jalur:
-                </strong>{" "}
-                Hanya nilai suhu pada jendela puncak diurnal (jam 10:00–17:00
-                waktu lokal) yang dicatat sebagai T_max dari setiap jalur,
-                karena Changi Airport paling sering mencapai puncak harian di
-                rentang waktu tersebut.
+                <strong className="text-slate-700 dark:text-slate-300">T_max per jalur:</strong>{" "}
+                Hanya nilai suhu pada jendela puncak diurnal (jam 10:00–17:00 waktu lokal) yang
+                dicatat sebagai T_max dari setiap jalur, karena Changi Airport paling sering
+                mencapai puncak harian di rentang waktu tersebut.
               </p>
             </div>
           )}
